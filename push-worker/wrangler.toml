@@ -1,0 +1,12 @@
+# Optional: only needed if you deploy the reminder Worker with Wrangler or
+# Cloudflare's Git integration instead of pasting worker.js into the dashboard.
+name = "letspray-reminders"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[[kv_namespaces]]
+binding = "INTERCEDE_KV"
+id = "PUT-YOUR-LETSPRAY_KV-NAMESPACE-ID-HERE"

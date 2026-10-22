@@ -14,6 +14,52 @@ A free, open-source prayer tool for youth ministry leaders. Built to help your t
 
 ---
 
+## IMPACT Students edition
+
+This copy has been customized for IMPACT Student Ministry. On top of the original app it adds:
+
+- **IMPACT branding:** logo, brand colors, and a matching Home Screen icon
+- **Photos:** tap the camera on anyone in the People tab to add a photo; it shows on their prayer card and in the Roster
+- **Small groups:** create groups in the People tab, assign students and leaders, then filter the Pray deck and Roster by group
+- **CAUSE Circle:** each student's list of friends they're praying for to share the Gospel with, with a check-off for "heard the Gospel"
+- **Student page (`/submit`):** students send prayer requests and CAUSE Circle names; nothing appears until an admin approves it in the **Inbox** tab
+- **Streaks and goals:** a weekly team goal, a team streak, a personal daily streak, small group progress, and a Gospel-shared goal (Week tab; admins set goals in Report)
+- **Daily reminders:** each leader can turn on a push notification at the time they choose (Week tab)
+- **Security:** the app is locked behind sign-in, and passwords are stored only as scrambled hashes
+
+### Who can see what
+
+| Code | Who uses it | What they can do |
+|---|---|---|
+| **Admin password** | You | Everything: People, Inbox, Report, Import, settings, photos |
+| **Team code** | Leaders | Pray tab, Week, Roster: view the roster, mark prayed, add requests |
+| **Student code** | Students, at `/submit` | Send prayer requests and CAUSE Circle names for approval. Students can't see the roster |
+
+Sign-ins are remembered for 90 days (leaders), 24 hours (admin), and 180 days (students). Changing a code signs out everyone using the old one.
+
+### After this version deploys (one time)
+
+1. Open the app and sign in with your **existing admin password**. It's upgraded to the secure format automatically.
+2. Go to **People → App Settings** at the bottom and **set a team code**. Leaders can't get in until you do.
+3. Optional: set a **student code** in the same place, and share `your-app-url/submit` with students.
+
+Photos need no extra setup; they're stored in the same KV namespace as the roster.
+
+### Turning on daily reminders (one time, about 5 minutes)
+
+Cloudflare Pages can't run things on a schedule, so a tiny separate Worker sends the reminders.
+
+1. Cloudflare dashboard → **Workers & Pages → Create → Create Worker**. Name it `letspray-reminders` and click **Deploy**.
+2. Click **Edit code**, delete what's there, paste the entire contents of [`push-worker/worker.js`](push-worker/worker.js), and click **Deploy**.
+3. In the Worker go to **Settings → Bindings → Add → KV namespace**. Variable name `INTERCEDE_KV`, namespace `LETSPRAY_KV` (the same one the app uses). Save.
+4. **Settings → Trigger events → Add → Cron trigger**, and enter `*/15 * * * *` (every 15 minutes). Save.
+
+Then each leader opens the **Week** tab and taps **Turn on**. On iPhone the app must be added to the Home Screen first (Share → Add to Home Screen), then opened from there.
+
+If you edit `push-worker/src.js`, run `npm run build:worker` to regenerate `worker.js`, then paste it again.
+
+---
+
 ## What It Does
 
 - Prayer card deck — swipe or arrow through your roster one person at a time
@@ -109,4 +155,4 @@ If you improve it in a meaningful way and want to share back, open a pull reques
 
 ---
 
-*Built with React + Vite, deployed on Cloudflare Pages, data stored in Cloudflare KV.*
+*Built with React + Vite, deployed on Cloudflare Pages, data stored in Cloudflare KV.* IMPACT edition additions are in `functions/api/`, `lib/`, and `push-worker/`.
