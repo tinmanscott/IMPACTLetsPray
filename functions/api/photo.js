@@ -7,7 +7,7 @@
 
 const MAX_BYTES = 1024 * 1024; // 1 MB safety cap
 
-// Access is checked in _middleware.js: leaders can view, admins can upload/remove.
+// Access is checked in _middleware.js: leaders can view and add/change photos, only admins remove.
 const cors = {};
 
 function json(obj, status = 200) {
@@ -18,7 +18,7 @@ function json(obj, status = 200) {
 }
 
 function validId(id) {
-  return typeof id === "string" && /^[a-z0-9]{4,40}$/i.test(id);
+  return typeof id === "string" && /^[a-z0-9_]{4,40}$/i.test(id);
 }
 
 export async function onRequest(context) {

@@ -182,6 +182,7 @@ async function apiSaveSmallGroups(groups) {
 
 /* ── Photos ── */
 function photoUrl(p) {
+  if (typeof window !== "undefined" && window.__lpPhotoUrl) return window.__lpPhotoUrl(p); // demo preview only
   return p && p.photo ? `/api/photo?id=${encodeURIComponent(p.id)}&v=${p.photo}` : null;
 }
 
@@ -215,6 +216,20 @@ async function apiUploadPhoto(personId, file) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(data.error || "Upload failed");
   return data.v;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error("Could not read image"));
+    r.readAsDataURL(blob);
+  });
+}
+
+function pendingPhotoUrl(submissionId) {
+  if (typeof window !== "undefined" && window.__lpPendingPhotoUrl) return window.__lpPendingPhotoUrl(submissionId); // demo preview only
+  return `/api/inbox?photo=${encodeURIComponent(submissionId)}`;
 }
 
 async function apiDeletePhoto(personId) {
@@ -764,6 +779,15 @@ function ReminderCard() {
   const box = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 16px", marginBottom: 16 };
   const head = <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}><Bell size={14} color={C.orange} /><span style={{ fontSize:13, fontWeight:600, color:C.cream }}>Daily Prayer Reminder</span>{on && <span style={{ marginLeft:"auto", fontSize:11, color:C.accent, fontWeight:600 }}>ON</span>}</div>;
 
+  if (typeof window !== "undefined" && window.__LP_DEMO) {
+    return (
+      <div style={box}>
+        {head}
+        <p style={{ margin:0, fontSize:12.5, color:C.muted, lineHeight:1.55 }}>Leaders pick a time here and tap Turn on. Notifications only work in the real app, not in this demo.</p>
+      </div>
+    );
+  }
+
   if (!supported || (isIOS() && !isStandalone())) {
     return (
       <div style={box}>
@@ -904,8 +928,12 @@ class ErrorBoundary extends React.Component {
 
 /* ── Student page (/submit) ── */
 const STUDENT_NAME_KEY = "lp-student-name";
+const STUDENT_GRADE_KEY = "lp-student-grade";
+const STUDENT_BDAY_KEY = "lp-student-bday";
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-function StudentPage() {
+export function StudentPage() {
   const [info, setInfo] = React.useState(null);
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
@@ -914,7 +942,27 @@ function StudentPage() {
   const [kind, setKind] = React.useState("request");
   const [text, setText] = React.useState("");
   const [friends, setFriends] = React.useState(["", "", ""]);
+  const [grade, setGrade] = React.useState(() => lsGet(STUDENT_GRADE_KEY) || "");
+  const [bMonth, setBMonth] = React.useState(() => (lsGet(STUDENT_BDAY_KEY) || "").split("-")[0] || "");
+  const [bDay, setBDay] = React.useState(() => (lsGet(STUDENT_BDAY_KEY) || "").split("-")[1] || "");
   const [done, setDone] = React.useState(false);
+  const [tab, setTab] = React.useState("share");
+  const [share, setShare] = React.useState(false);
+  const [anonymous, setAnonymous] = React.useState(false);
+  const [sharedLast, setSharedLast] = React.useState(false);
+  const [photoData, setPhotoData] = React.useState("");
+  const [photoBusyS, setPhotoBusyS] = React.useState(false);
+  const studentPhotoRef = React.useRef(null);
+
+  async function choosePhoto(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setPhotoBusyS(true); setErr("");
+    try { setPhotoData(await blobToDataUrl(await resizeImage(file, 480))); }
+    catch (_e) { setErr("That photo couldn’t be used. Try a different one."); }
+    setPhotoBusyS(false);
+  }
 
   const load = React.useCallback(() => {
     fetch("/api/submit", { cache: "no-store" }).then(r => r.json()).then(setInfo).catch(() => setInfo({ error: true }));
@@ -935,14 +983,20 @@ function StudentPage() {
     if (name.trim().length < 2) return setErr("Please enter your first and last name.");
     if (kind === "request" && text.trim().length < 3) return setErr("Please write your prayer request.");
     if (kind === "cause" && !list.length) return setErr("Add at least one friend’s name.");
+    if ((bMonth && !bDay) || (!bMonth && bDay)) return setErr("Pick both the month and day of your birthday.");
+    const birthday = bMonth && bDay ? `${bMonth}-${bDay}` : "";
+    if (kind === "info" && !grade && !birthday && !photoData) return setErr("Add your grade, birthday, or a photo.");
     setBusy(true);
     try {
-      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list }) });
+      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: kind === "request" && share, anonymous: kind === "request" && share && anonymous, photo: photoData || undefined }) });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) { load(); throw new Error("Please enter the student code again."); }
       if (!res.ok) throw new Error(data.error || "That didn’t send. Try again.");
       lsSet(STUDENT_NAME_KEY, name.trim());
-      setDone(true); setText(""); setFriends(["", "", ""]);
+      lsSet(STUDENT_GRADE_KEY, grade || null);
+      lsSet(STUDENT_BDAY_KEY, birthday || null);
+      setSharedLast(kind === "request" && share);
+      setDone(true); setText(""); setFriends(["", "", ""]); setShare(false); setAnonymous(false); setPhotoData("");
     } catch (e) { setErr(e.message); }
     setBusy(false);
   }
@@ -978,26 +1032,96 @@ function StudentPage() {
       <div style={{ ...card, alignItems:"center", textAlign:"center" }}>
         <Heart size={40} color="#e95e24" fill="#e95e24" />
         <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>Got it. Thank you!</p>
-        <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>Your leaders will see this and start praying.</p>
-        <button onClick={() => setDone(false)} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share something else</button>
+        <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>
+          Your leaders will see this and start praying.{sharedLast ? " Once a leader approves it, it will show on the Prayer Wall too." : ""}
+        </p>
+        <button onClick={() => { setDone(false); setKind("request"); }} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share something else</button>
+        <button onClick={() => { setDone(false); setTab("wall"); }} style={{ background:"none", border:"none", color:"#7fd06c", fontSize:14, fontWeight:600, cursor:"pointer", marginTop:4 }}>Go to the Prayer Wall →</button>
       </div>
     </div>
   );
 
-  const chip = on => ({ flex:1, padding:"11px 0", borderRadius:10, border:`1px solid ${on ? "#5aba47" : "#34363a"}`, background: on ? "#18241a" : "#1f2023", color: on ? "#f2f1ee" : "#80848a", fontSize:14, fontWeight: on ? 700 : 500, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  const tabsRow = (
+    <div style={{ display:"flex", width:"100%", maxWidth:400, background:"#1f2023", border:"1px solid #34363a", borderRadius:12, padding:4, gap:4, marginBottom:18, boxSizing:"border-box" }}>
+      {[["share","Share"],["wall","Prayer Wall"]].map(([v, l]) => (
+        <button key={v} onClick={() => setTab(v)} style={{ flex:1, padding:"10px 0", borderRadius:9, border:"none", background: tab === v ? "#5aba47" : "none", color: tab === v ? "#fff" : "#80848a", fontWeight: tab === v ? 700 : 500, fontSize:14, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
+      ))}
+    </div>
+  );
+
+  if (tab === "wall") return (
+    <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
+      {header}
+      {tabsRow}
+      <PrayerWall />
+    </div>
+  );
+
+  const chip = on => ({ flex:1, padding:"11px 2px", borderRadius:10, border:`1px solid ${on ? "#5aba47" : "#34363a"}`, background: on ? "#18241a" : "#1f2023", color: on ? "#f2f1ee" : "#80848a", fontSize:14, fontWeight: on ? 700 : 500, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
   return (
     <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
       {header}
+      {tabsRow}
       <div style={card}>
         <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
         <div style={{ display:"flex", gap:8 }}>
+          <div style={{ flex:"0 0 34%" }}>
+            <label style={authLbl}>Grade</label>
+            <select value={grade} onChange={e => setGrade(e.target.value)} style={{ ...authInp, padding:"12px 10px" }}>
+              <option value="">—</option>
+              {[6,7,8,9,10,11,12].map(g => <option key={g} value={g}>{g}th</option>)}
+            </select>
+          </div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <label style={authLbl}>Birthday</label>
+            <div style={{ display:"flex", gap:6 }}>
+              <select value={bMonth} onChange={e => { setBMonth(e.target.value); if (bDay && Number(bDay) > DAYS_IN_MONTH[Number(e.target.value) - 1]) setBDay(""); }} style={{ ...authInp, padding:"12px 8px", flex:1.6, minWidth:0 }}>
+                <option value="">Month</option>
+                {MONTHS.map((m, i) => <option key={m} value={String(i + 1).padStart(2, "0")}>{m.slice(0, 3)}</option>)}
+              </select>
+              <select value={bDay} onChange={e => setBDay(e.target.value)} style={{ ...authInp, padding:"12px 8px", flex:1, minWidth:0 }}>
+                <option value="">Day</option>
+                {Array.from({ length: bMonth ? DAYS_IN_MONTH[Number(bMonth) - 1] : 31 }, (_, i) => String(i + 1).padStart(2, "0")).map(d => <option key={d} value={d}>{Number(d)}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12, background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"10px 12px" }}>
+          <input ref={studentPhotoRef} type="file" accept="image/*" onChange={choosePhoto} style={{ display:"none" }} />
+          {photoData
+            ? <img src={photoData} alt="Your photo" style={{ width:52, height:52, borderRadius:"50%", objectFit:"cover", flexShrink:0 }} />
+            : <div style={{ width:52, height:52, borderRadius:"50%", border:"1.5px dashed #4a4d52", display:"flex", alignItems:"center", justifyContent:"center", color:"#80848a", flexShrink:0 }}><Camera size={20} /></div>}
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:14, color:"#f2f1ee", fontWeight:600 }}>{photoData ? "Photo added" : "Add your photo"} <span style={{ fontWeight:400, color:"#80848a", fontSize:12 }}>(optional)</span></div>
+            <div style={{ fontSize:12, color:"#80848a", lineHeight:1.4 }}>Goes on your prayer card after a leader approves it.</div>
+          </div>
+          <button onClick={() => studentPhotoRef.current && studentPhotoRef.current.click()} disabled={photoBusyS} style={{ background:"none", border:"1px solid #34363a", color:"#f2f1ee", borderRadius:8, padding:"7px 10px", fontSize:13, cursor:"pointer", flexShrink:0 }}>{photoBusyS ? "…" : photoData ? "Change" : "Choose"}</button>
+          {photoData && <button onClick={() => setPhotoData("")} aria-label="Remove photo" style={{ background:"none", border:"none", color:"#80848a", cursor:"pointer", padding:2, display:"flex" }}><X size={16} /></button>}
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
           <button onClick={() => setKind("request")} style={chip(kind === "request")}>Prayer request</button>
           <button onClick={() => setKind("cause")} style={chip(kind === "cause")}>CAUSE Circle</button>
+          <button onClick={() => setKind("info")} style={chip(kind === "info")}>Just my info</button>
         </div>
-        {kind === "request" ? (
+        {kind === "info" ? (
+          <p style={{ margin:0, fontSize:13, color:"#80848a", lineHeight:1.5 }}>Sends your grade, birthday, and photo to your leaders so they can update the roster.</p>
+        ) : kind === "request" ? (
           <div>
             <label style={authLbl}>How can we pray for you?</label>
             <textarea value={text} onChange={e => setText(e.target.value)} rows={5} maxLength={600} placeholder="Share as much or as little as you want." style={{ ...authInp, resize:"vertical", lineHeight:1.5 }} />
+            <div style={{ marginTop:10, background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+              <label style={{ display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer", fontSize:14, color:"#f2f1ee", lineHeight:1.4 }}>
+                <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#5aba47" }} />
+                <span>Also share on the student Prayer Wall<br /><span style={{ fontSize:12, color:"#80848a" }}>So other students can pray for you too</span></span>
+              </label>
+              {share && (
+                <div style={{ display:"flex", gap:8, paddingLeft:27 }}>
+                  {[[false, "Show my first name"], [true, "Post anonymously"]].map(([v, l]) => (
+                    <button key={l} onClick={() => setAnonymous(v)} style={{ flex:1, padding:"8px 4px", borderRadius:8, border:`1px solid ${anonymous === v ? "#5aba47" : "#34363a"}`, background: anonymous === v ? "#18241a" : "none", color: anonymous === v ? "#f2f1ee" : "#80848a", fontSize:12.5, cursor:"pointer" }}>{l}</button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
@@ -1011,10 +1135,70 @@ function StudentPage() {
         )}
         {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0 }}>{err}</p>}
         <button onClick={submit} disabled={busy} style={{ ...authBtn, background:"#e95e24", opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Send size={15} /> {busy ? "Sending…" : "Send to my leaders"}</button>
-        <p style={{ fontSize:12, color:"#5c6066", margin:"4px 0 24px", textAlign:"center", lineHeight:1.5 }}>Only your student ministry leaders will see what you send.</p>
+        <p style={{ fontSize:12, color:"#5c6066", margin:"4px 0 24px", textAlign:"center", lineHeight:1.5 }}>
+          {kind === "request" && share ? "Your leaders see your full name. A leader approves posts before they go on the wall." : "Only your student ministry leaders will see what you send."}
+        </p>
       </div>
     </div>
   );
+}
+
+/* ── Prayer Wall (students) ── */
+const WALL_PRAYED_KEY = "lp-wall-prayed";
+
+function PrayerWall() {
+  const [posts, setPosts] = React.useState(null);
+  const [err, setErr] = React.useState("");
+  const [mine, setMine] = React.useState(() => { try { return JSON.parse(lsGet(WALL_PRAYED_KEY) || "{}"); } catch (_e) { return {}; } });
+
+  const load = React.useCallback(() => {
+    fetch("/api/wall", { cache: "no-store" })
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(list => { setPosts(list); setErr(""); })
+      .catch(() => setErr("Couldn’t load the Prayer Wall. Pull down to refresh."));
+  }, []);
+  React.useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+
+  async function pray(id) {
+    const today = localDay();
+    if (mine[id] === today) return;
+    const next = { ...mine, [id]: today };
+    setMine(next); lsSet(WALL_PRAYED_KEY, JSON.stringify(next));
+    setPosts(prev => prev.map(p => p.id === id ? { ...p, prayed: p.prayed + 1 } : p));
+    fetch("/api/wall?action=pray", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => {});
+  }
+
+  const wrap = { width:"100%", maxWidth:400, display:"flex", flexDirection:"column", gap:10 };
+  if (err) return <p style={{ color:"#e07a5f", fontSize:14 }}>{err}</p>;
+  if (!posts) return <p style={{ color:"#80848a", fontSize:14 }}>Loading…</p>;
+  return (
+    <div style={wrap}>
+      <p style={{ margin:"0 0 6px", fontSize:13, color:"#80848a", lineHeight:1.5, textAlign:"center" }}>Take a moment to pray for each other. Tap 🙏 when you do.</p>
+      {posts.length === 0 && <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"24px 0" }}>No requests on the wall right now.</p>}
+      {posts.map(p => {
+        const done = mine[p.id] === localDay();
+        return (
+          <div key={p.id} style={{ background:"#1f2023", border:"1px solid #34363a", borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:10 }}>
+            <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+              <span style={{ fontSize:15, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
+              <span style={{ marginLeft:"auto", fontSize:12, color:"#80848a" }}>{timeAgo(p.createdAt)}</span>
+            </div>
+            <p style={{ margin:0, fontSize:15, color:"#f2f1ee", lineHeight:1.5, whiteSpace:"pre-wrap" }}>{p.text}</p>
+            <button onClick={() => pray(p.id)} disabled={done}
+              style={{ alignSelf:"flex-start", display:"flex", alignItems:"center", gap:8, padding:"9px 14px", borderRadius:20, border:`1px solid ${done ? "#5aba47" : "#e95e24"}`, background: done ? "#18241a" : "#e95e24", color:"#fff", fontSize:14, fontWeight:700, cursor: done ? "default" : "pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+              {done ? "✓ Prayed" : "🙏 I prayed"}
+              <span style={{ fontWeight:500, opacity:0.85 }}>· {p.prayed}</span>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function wallName(item) {
+  if (item.anonymous) return "Anonymous";
+  return (item.name || "").trim().split(/\s+/)[0] || "Anonymous";
 }
 
 /* ── Admin inbox ── */
@@ -1038,26 +1222,62 @@ function guessPerson(name, people) {
 function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
   const [match, setMatch] = React.useState({});
   const [edits, setEdits] = React.useState({});
+  const [skipInfo, setSkipInfo] = React.useState({});
+  const [skipWall, setSkipWall] = React.useState({});
+  const [skipPhoto, setSkipPhoto] = React.useState({});
+  const [wall, setWall] = React.useState([]);
+  const loadWall = React.useCallback(() => {
+    fetch("/api/wall").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setWall(l)).catch(() => {});
+  }, []);
+  React.useEffect(() => { loadWall(); }, [loadWall]);
+  async function postToWall(name, text) {
+    await fetch("/api/wall?action=post", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, text }) }).catch(() => {});
+    loadWall();
+  }
+  async function removeFromWall(id) {
+    setWall(prev => prev.filter(p => p.id !== id));
+    await fetch("/api/wall?action=remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => {});
+  }
   const choices = React.useMemo(() => people.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)), [people]);
 
-  function approve(item) {
+  async function approve(item) {
     const chosen = match[item.id] ?? guessPerson(item.name, choices);
     const text = (edits[item.id] ?? item.text ?? "").trim();
     const friends = item.kind === "cause"
       ? (edits[item.id] !== undefined ? edits[item.id].split(/[,\n]/) : item.friends || []).map(f => f.trim()).filter(Boolean)
       : [];
-    const apply = p => {
+    const withInfo = p => {
+      if (skipInfo[item.id]) return p;
+      const next = { ...p };
+      if (item.grade) { next.grade = item.grade; if (p.type !== "leader") next.group = item.grade >= 9 ? "hs" : "ms"; }
+      if (item.birthday) next.birthday = item.birthday;
+      return next;
+    };
+    const applyContent = p => {
+      if (item.kind === "info") return { ...p, updatedAt: Date.now() };
       if (item.kind === "request") return { ...p, prayerRequests: [...(p.prayerRequests || []), text], updatedAt: Date.now() };
       const have = new Set((p.causeCircle || []).map(f => normName(f.name)));
       const add = friends.filter(f => !have.has(normName(f))).map(f => ({ id: genId(), name: f, shared: false }));
       return { ...p, causeCircle: [...(p.causeCircle || []), ...add], updatedAt: Date.now() };
     };
+    const apply = p => applyContent(withInfo(p));
+    const usePhoto = item.hasPhoto && !skipPhoto[item.id];
+    const attachPhoto = personId => {
+      if (!usePhoto) return Promise.resolve();
+      return fetch("/api/inbox", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "usePhoto", id: item.id, personId }) })
+        .then(r => r.json()).then(d => { if (d && d.ok) setPeople(prev => prev.map(p => p.id === personId ? { ...p, photo: d.v, updatedAt: Date.now() } : p)); })
+        .catch(() => {});
+    };
     if (chosen === "__new") {
-      const base = { id: genId(), name: item.name, type: "student", group: null, grade: null, active: true, prayedAt: null, prayerRequests: [], causeCircle: [], birthday: "", updatedAt: Date.now() };
+      const newId = genId();
+      const base = { id: newId, name: item.name, type: "student", group: null, grade: null, active: true, prayedAt: null, prayerRequests: [], causeCircle: [], birthday: "", updatedAt: Date.now() };
       setPeople(prev => [...prev, apply(base)]);
+      await attachPhoto(newId);
     } else if (chosen) {
       setPeople(prev => prev.map(p => p.id === chosen ? apply(p) : p));
+      await attachPhoto(chosen);
     } else return;
+    if (item.kind === "request" && item.share && !skipWall[item.id] && text) postToWall(wallName(item), text);
     onRemove([item.id]);
   }
 
@@ -1066,7 +1286,7 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
     <div style={S.importWrap}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><InboxIcon size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Student Inbox</p></div>
       <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
-        Requests and CAUSE Circle names students send from <b style={{ color:C.cream }}>{location.origin}/submit</b>. Nothing shows on a prayer card until you approve it.
+        Prayer requests, CAUSE Circle names, grades, birthdays and photos students send from <b style={{ color:C.cream }}>{location.origin}/submit</b>. Nothing shows on a prayer card until you approve it.
         {!studentCodeSet && <span style={{ color:C.orange }}> Set a student code in App Settings (People tab) to open the page.</span>}
       </p>
       {items.length === 0 && <p style={S.reportEmpty}>All caught up. No new submissions.</p>}
@@ -1078,11 +1298,41 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
             <div key={item.id} style={box}>
               <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
                 <span style={{ fontSize:14, color:C.cream, fontWeight:600 }}>{item.name}</span>
-                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : "Prayer request"}</span>
+                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : "Prayer request"}</span>
                 <span style={{ marginLeft:"auto", fontSize:11, color:C.muted }}>{timeAgo(item.createdAt)}</span>
               </div>
-              <textarea value={value} onChange={e => setEdits(prev => ({ ...prev, [item.id]: e.target.value }))} rows={item.kind === "request" ? 3 : 2}
-                style={{ ...S.reqInput, resize:"vertical", lineHeight:1.45, fontSize:13.5 }} />
+              {item.kind !== "info" && (
+                <textarea value={value} onChange={e => setEdits(prev => ({ ...prev, [item.id]: e.target.value }))} rows={item.kind === "request" ? 3 : 2}
+                  style={{ ...S.reqInput, resize:"vertical", lineHeight:1.45, fontSize:13.5 }} />
+              )}
+              {item.hasPhoto && (
+                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                  <img src={pendingPhotoUrl(item.id)} alt="Photo the student sent" style={{ width:64, height:64, borderRadius:"50%", objectFit:"cover", background:C.faint, flexShrink:0 }} />
+                  <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer", lineHeight:1.45 }}>
+                    <input type="checkbox" checked={!skipPhoto[item.id]} onChange={e => setSkipPhoto(prev => ({ ...prev, [item.id]: !e.target.checked }))} style={{ marginTop:2, accentColor:C.accent }} />
+                    <span>Use this photo on their prayer card</span>
+                  </label>
+                </div>
+              )}
+              {item.kind === "request" && item.share && (
+                <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer", lineHeight:1.45 }}>
+                  <input type="checkbox" checked={!skipWall[item.id]} onChange={e => setSkipWall(prev => ({ ...prev, [item.id]: !e.target.checked }))} style={{ marginTop:2, accentColor:C.orange }} />
+                  <span>Also post to the student Prayer Wall as <b>{wallName(item)}</b> <span style={{ color:C.muted }}>(edit the text above first if needed)</span></span>
+                </label>
+              )}
+              {(item.grade || item.birthday) && (() => {
+                const target = choices.find(p => p.id === chosen);
+                const changes = [];
+                if (item.grade && (!target || Number(target.grade) !== item.grade)) changes.push(`Grade ${target && target.grade ? `${target.grade} → ` : ""}${item.grade}`);
+                if (item.birthday && (!target || target.birthday !== item.birthday)) changes.push(`Birthday ${target && target.birthday ? `${formatBirthday(target.birthday)} → ` : ""}${formatBirthday(item.birthday)}`);
+                if (!changes.length) return <p style={{ margin:0, fontSize:12, color:C.muted }}>Grade and birthday already match the roster.</p>;
+                return (
+                  <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer", lineHeight:1.45 }}>
+                    <input type="checkbox" checked={!skipInfo[item.id]} onChange={e => setSkipInfo(prev => ({ ...prev, [item.id]: !e.target.checked }))} style={{ marginTop:2, accentColor:C.accent }} />
+                    <span>Update roster: {changes.join(" · ")}</span>
+                  </label>
+                );
+              })()}
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 <span style={S.gradeLabel}>Add to</span>
                 <select value={chosen} onChange={e => setMatch(prev => ({ ...prev, [item.id]: e.target.value }))} style={{ ...S.gradeSelect, flex:1, minWidth:0, borderColor: chosen ? C.border : C.orange }}>
@@ -1098,6 +1348,21 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ display:"flex", alignItems:"center", gap:8, margin:"26px 0 4px" }}><Heart size={16} color={C.orange} /><p style={{ ...S.reportTitle, margin:0, color:C.orange }}>On the Prayer Wall now</p></div>
+      <p style={{ margin:"0 0 12px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>Students see these at the Prayer Wall tab of the student page. Posts drop off after 30 days.</p>
+      {wall.length === 0 && <p style={S.reportEmpty}>Nothing on the wall yet.</p>}
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {wall.map(p => (
+          <div key={p.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 12px", display:"flex", gap:10, alignItems:"flex-start" }}>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, color:C.cream, fontWeight:600 }}>{p.name} <span style={{ fontWeight:400, color:C.muted, fontSize:12 }}>· {timeAgo(p.createdAt)} · 🙏 {p.prayed}</span></div>
+              <div style={{ fontSize:13, color:C.muted, marginTop:3, lineHeight:1.4 }}>{p.text}</div>
+            </div>
+            <button onClick={() => removeFromWall(p.id)} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12, flexShrink:0 }}>Remove</button>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1130,7 +1395,7 @@ function Bar({ value, max, color }) {
   return <div style={{ height:8, background:C.faint, borderRadius:4, overflow:"hidden" }}><div style={{ height:"100%", width:`${pct}%`, background:color, borderRadius:4, transition:"width 0.6s ease" }} /></div>;
 }
 
-function GoalsCard({ goals, activePeople, weekHistory, smallGroups }) {
+function GoalsCard({ goals, activePeople, weekHistory, smallGroups, myGroupId }) {
   const total = activePeople.length;
   const target = Math.max(1, Math.ceil(total * (goals.weeklyPct || 100) / 100));
   const prayed = activePeople.filter(p => withinWeek(p.prayedAt)).length;
@@ -1182,10 +1447,10 @@ function GoalsCard({ goals, activePeople, weekHistory, smallGroups }) {
         <div>
           <span style={label}>Small groups this week</span>
           <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:8 }}>
-            {groupRows.sort((a, b) => (b.done / b.total) - (a.done / a.total)).map(r => (
-              <div key={r.id}>
+            {groupRows.sort((a, b) => (b.id === myGroupId) - (a.id === myGroupId) || (b.done / b.total) - (a.done / a.total)).map(r => (
+              <div key={r.id} style={r.id === myGroupId ? { background:C.faint, margin:"0 -8px", padding:"6px 8px", borderRadius:8 } : {}}>
                 <div style={{ display:"flex", justifyContent:"space-between", fontSize:12.5, marginBottom:4 }}>
-                  <span style={{ color:C.cream }}>{r.name}</span>
+                  <span style={{ color:C.cream, fontWeight: r.id === myGroupId ? 700 : 400 }}>{r.name}{r.id === myGroupId && <span style={{ color:C.accentLight, fontWeight:500 }}> · your group</span>}</span>
                   <span style={{ color: r.done >= r.total ? C.accentLight : C.muted }}>{r.done >= r.total ? "all prayed ✓" : `${r.done} / ${r.total}`}</span>
                 </div>
                 <Bar value={r.done} max={r.total} color={C.accent} />
@@ -1270,7 +1535,18 @@ function AppMain({ settings, role, onStatus }) {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState("pray");
   const [order, setOrder] = useState("random");
-  const [filter, setFilter] = useState("all");
+  // Each leader can pick "my small group" on their device; the Pray deck opens to it
+  const [myGroupId, setMyGroupIdState] = useState(() => lsGet("lp-my-group") || "");
+  const [filter, setFilter] = useState(() => lsGet("lp-my-group") ? `sg:${lsGet("lp-my-group")}` : "all");
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [pickingGroup, setPickingGroup] = useState(false);
+  function setMyGroup(id) {
+    lsSet("lp-my-group", id || null);
+    setMyGroupIdState(id || "");
+    setFilter(id ? `sg:${id}` : "all");
+    setCardIdx(0);
+    setPickingGroup(false);
+  }
   const [cardIdx, setCardIdx] = useState(0);
   const [deckIds, setDeckIds] = useState([]);
   const [ready, setReady] = useState(() => !shouldShowTap());
@@ -1362,6 +1638,10 @@ function AppMain({ settings, role, onStatus }) {
     return () => { link.remove(); style.remove(); };
   }, []);
 
+  useEffect(() => {
+    if (groupsLoaded && myGroupId && !smallGroups.some(g => g.id === myGroupId)) setMyGroup("");
+  }, [groupsLoaded, smallGroups, myGroupId]);
+
   // Student inbox (admins only)
   const loadInbox = useCallback(() => {
     if (!adminAuthed) return;
@@ -1399,6 +1679,7 @@ function AppMain({ settings, role, onStatus }) {
         const [data, history, groups] = await Promise.all([apiLoad(), apiLoadHistory(), apiLoadSmallGroups()]);
         if (data.length > 0) setPeople(data);
         setSmallGroups(groups);
+        setGroupsLoaded(true);
         fetch("/api/data?key=goals").then(r => r.ok ? r.json() : null).then(g => g && setGoals(g)).catch(() => {});
 
         const currentWeekStart = getWeekStartET();
@@ -2017,6 +2298,31 @@ function AppMain({ settings, role, onStatus }) {
       {/* ─── PRAY ─── */}
       {view === "pray" && (
         <div style={S.prayWrap}>
+          {smallGroups.length > 0 && (
+            <div style={S.myGroupRow}>
+              {myGroupId && groupName(myGroupId) && !pickingGroup ? (
+                <>
+                  <div style={S.myGroupPill}>
+                    <button onClick={() => { setFilter(`sg:${myGroupId}`); setCardIdx(0); }} style={{ ...S.myGroupOpt, ...(filter === `sg:${myGroupId}` ? S.myGroupOptOn : {}) }}>
+                      <Users size={13} style={{ marginRight:6, flexShrink:0 }} /><span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{groupName(myGroupId)}</span>
+                    </button>
+                    <button onClick={() => { setFilter("all"); setCardIdx(0); }} style={{ ...S.myGroupOpt, ...(filter === "all" ? S.myGroupOptOn : {}) }}>Everyone</button>
+                  </div>
+                  <button onClick={() => setPickingGroup(true)} style={S.myGroupChange}>change</button>
+                </>
+              ) : (
+                <>
+                  <select value="" onChange={e => setMyGroup(e.target.value)} style={{ ...S.filterSelect, flex:1, color:C.cream, borderColor:C.accent + "66" }}>
+                    <option value="">{myGroupId ? "Choose your small group…" : "Pray for my small group…"}</option>
+                    {smallGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                  {myGroupId && <button onClick={() => setMyGroup("")} style={S.myGroupChange}>clear</button>}
+                  {pickingGroup && <button onClick={() => setPickingGroup(false)} style={S.myGroupChange}>cancel</button>}
+                </>
+              )}
+            </div>
+          )}
+          {photoError && view === "pray" && <p style={{ margin:"0 0 8px", fontSize:12, color:"#e07a5f", textAlign:"center" }}>Photo: {photoError}</p>}
           <div style={S.controls}>
             <div style={S.togglePill}>
               <button onClick={() => { setOrder("random"); buildDeck(); }} style={{ ...S.toggleOpt, ...(order === "random" ? S.toggleOptOn : {}) }}>Shuffle</button>
@@ -2113,6 +2419,15 @@ function AppMain({ settings, role, onStatus }) {
                       ...(cardAnim === "entering-left" ? { animation: "flyInLeft  0.3s cubic-bezier(.22,.68,0,1.2) forwards" } : {}),
                       ...(cardAnim === "entering-right"? { animation: "flyInRight 0.3s cubic-bezier(.22,.68,0,1.2) forwards" } : {}),
                     }}>
+                      {/* Add / change photo (leaders and admins) */}
+                      {current && (
+                        <button onClick={() => pickPhoto(current.id)} disabled={photoBusy === current.id}
+                          title={current.photo ? "Change photo" : "Add photo"} aria-label={current.photo ? "Change photo" : "Add photo"} style={S.cardCamBtn}>
+                          {photoBusy === current.id ? <RefreshCw size={14} /> : <Camera size={14} />}
+                          {!current.photo && <span style={{ marginLeft:5 }}>Photo</span>}
+                        </button>
+                      )}
+
                       {/* Photo */}
                       {photoUrl(current) && (
                         <div style={{ ...S.cardPhotoWrap, transform: `rotate(${photoRotation(current.id) * 0.5}deg)` }}>
@@ -2297,7 +2612,7 @@ function AppMain({ settings, role, onStatus }) {
         <div style={S.weekWrap}>
           <h2 style={S.weekTitle}>This Week</h2>
 
-          <GoalsCard goals={goals} activePeople={activePeople} weekHistory={weekHistory} smallGroups={smallGroups} />
+          <GoalsCard goals={goals} activePeople={activePeople} weekHistory={weekHistory} smallGroups={smallGroups} myGroupId={myGroupId} />
           <ReminderCard />
 
           {upcomingBdays.length > 0 && (
@@ -2690,8 +3005,11 @@ function AppMain({ settings, role, onStatus }) {
                 const bdayFmt = p.birthday ? (() => { const [m, d] = p.birthday.split("-"); const date = new Date(2000, parseInt(m)-1, parseInt(d)); return date.toLocaleDateString("en-US", { month:"short", day:"numeric" }); })() : null;
                 return (
                   <div key={p.id} style={{ display:"flex", alignItems:"center", padding:"11px 14px", background:C.surface, borderRadius:8, gap:12 }}>
-                    {/* Photo */}
-                    <Avatar person={p} size={44} />
+                    {/* Photo — tap to add or change */}
+                    <button onClick={() => pickPhoto(p.id)} style={S.avatarBtn} title={p.photo ? "Change photo" : "Add photo"} aria-label={p.photo ? `Change photo for ${p.name}` : `Add photo for ${p.name}`} disabled={photoBusy === p.id}>
+                      <Avatar person={p} size={44} />
+                      <span style={S.avatarCam}>{photoBusy === p.id ? <RefreshCw size={9} /> : <Camera size={9} />}</span>
+                    </button>
                     {/* Text — left aligned below name */}
                     <div style={{ display:"flex", flexDirection:"column", gap:3, flex:1, minWidth:0 }}>
                       <span style={{ fontSize:15, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
@@ -3089,6 +3407,12 @@ const S = {
     reminderOffBtn: { background: "none", border: `1px solid ${C.border}`, color: "#8a5050", borderRadius: 10, padding: "9px 0", fontSize: 12, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
   // ADMIN FOOTER
   adminFooter: { display: "flex", justifyContent: "center", padding: "12px 0 20px", marginTop: "auto" },
+  cardCamBtn: { position: "absolute", top: 12, right: 12, zIndex: 2, display: "flex", alignItems: "center", background: C.faint, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 16, padding: "6px 9px", fontSize: 12, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
+  myGroupRow: { display: "flex", alignItems: "center", gap: 8, width: "100%", marginBottom: 10 },
+  myGroupPill: { display: "flex", flex: 1, minWidth: 0, background: C.faint, border: `1px solid ${C.border}`, borderRadius: 22, padding: 3, gap: 3 },
+  myGroupOpt: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.muted, borderRadius: 18, padding: "7px 10px", fontSize: 13, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
+  myGroupOptOn: { background: C.accent, color: "#fff", fontWeight: 600 },
+  myGroupChange: { background: "none", border: "none", color: C.muted, fontSize: 12, cursor: "pointer", padding: "4px 2px", fontFamily: "'Inter', system-ui, sans-serif", flexShrink: 0 },
   tabBadge: { position: "absolute", top: 2, right: -2, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: C.orange, color: "#fff", fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 },
   adminLink: { background: "none", border: "none", color: C.border, fontSize: 11, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "0.06em" },
   // MODAL

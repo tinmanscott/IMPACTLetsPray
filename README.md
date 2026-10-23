@@ -19,10 +19,13 @@ A free, open-source prayer tool for youth ministry leaders. Built to help your t
 This copy has been customized for IMPACT Student Ministry. On top of the original app it adds:
 
 - **IMPACT branding:** logo, brand colors, and a matching Home Screen icon
-- **Photos:** tap the camera on anyone in the People tab to add a photo; it shows on their prayer card and in the Roster
+- **Photos:** shown on prayer cards and in the Roster. Admins add them in People; leaders can add or change them from a prayer card (camera button) or by tapping a face in the Roster; students can send their own from the student page, which waits in the Inbox for approval. Only admins can remove a photo
 - **Small groups:** create groups in the People tab, assign students and leaders, then filter the Pray deck and Roster by group
 - **CAUSE Circle:** each student's list of friends they're praying for to share the Gospel with, with a check-off for "heard the Gospel"
 - **Student page (`/submit`):** students send prayer requests and CAUSE Circle names; nothing appears until an admin approves it in the **Inbox** tab
+- **Student info updates:** students include their grade and birthday (or send "Just my info"); approving in the Inbox updates the roster, with a checkbox to skip it
+- **Student Prayer Wall:** when sending a request, a student can choose to share it on the wall with their first name or anonymously. Nothing posts until an admin approves it. Students tap 🙏 "I prayed" on each other's requests (Prayer Wall tab at `/submit`). Admins can remove posts in the Inbox, and posts drop off after 30 days
+- **My small group:** each leader picks their small group once on the Pray tab; the deck opens to that group, with a one-tap switch to Everyone. Their group is highlighted in the Week tab
 - **Streaks and goals:** a weekly team goal, a team streak, a personal daily streak, small group progress, and a Gospel-shared goal (Week tab; admins set goals in Report)
 - **Daily reminders:** each leader can turn on a push notification at the time they choose (Week tab)
 - **Security:** the app is locked behind sign-in, and passwords are stored only as scrambled hashes
@@ -33,7 +36,7 @@ This copy has been customized for IMPACT Student Ministry. On top of the origina
 |---|---|---|
 | **Admin password** | You | Everything: People, Inbox, Report, Import, settings, photos |
 | **Team code** | Leaders | Pray tab, Week, Roster: view the roster, mark prayed, add requests |
-| **Student code** | Students, at `/submit` | Send prayer requests and CAUSE Circle names for approval. Students can't see the roster |
+| **Student code** | Students, at `/submit` | Send prayer requests, CAUSE Circle names, and grade/birthday for approval, and pray on the Prayer Wall. Students can't see the roster |
 
 Sign-ins are remembered for 90 days (leaders), 24 hours (admin), and 180 days (students). Changing a code signs out everyone using the old one.
 
@@ -44,6 +47,8 @@ Sign-ins are remembered for 90 days (leaders), 24 hours (admin), and 180 days (s
 3. Optional: set a **student code** in the same place, and share `your-app-url/submit` with students.
 
 Photos need no extra setup; they're stored in the same KV namespace as the roster.
+
+**Usage note:** Cloudflare's free plan allows about 1,000 data saves per day across the whole app (each "Mark as Prayed," approval, or 🙏 tap is one). That's plenty for normal use. If a busy youth night ever hits the limit, saves pause until the next day; the Workers Paid plan ($5/month) raises it to a million.
 
 ### Turning on daily reminders (one time, about 5 minutes)
 

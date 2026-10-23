@@ -10,9 +10,13 @@ function requiredRole(path, url, method) {
     if (key === "smallgroups" && method !== "GET") return "admin";
     return "team"; // people: view + mark prayed (deletes are checked again in data.js)
   }
-  if (path === "/api/photo") return method === "GET" ? "team" : "admin";
+  if (path === "/api/photo") return method === "DELETE" ? "admin" : "team"; // leaders can add/change photos; only admins remove
   if (path === "/api/submit") return method === "GET" ? "public" : "student";
   if (path === "/api/inbox") return "admin";
+  if (path === "/api/wall") {
+    const action = url.searchParams.get("action");
+    return method === "GET" || action === "pray" ? "student" : "admin";
+  }
   return "team"; // history, push, anything new: logged-in leaders only
 }
 
