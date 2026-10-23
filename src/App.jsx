@@ -805,6 +805,22 @@ function LockScreen({ status, onSignedIn, mode = "leader" }) {
   );
 }
 
+/* Link to the Be There app (IMPACT events and sign-ups) */
+const BE_THERE_URL = "https://impactbethere.app";
+function BeThereCard({ maxWidth = 400, who = "student" }) {
+  const sub = who === "parent" ? "See what’s coming up and sign your student up." : who === "leader" ? "Event details, sign-ups and who’s coming." : "See what’s coming up and sign up.";
+  return (
+    <a href={BE_THERE_URL} target="_blank" rel="noopener noreferrer" style={{ width:"100%", maxWidth, boxSizing:"border-box", display:"flex", alignItems:"center", gap:12, background:"#2a1c15", border:"1px solid #e95e2466", borderRadius:12, padding:"12px 14px", marginBottom:14, textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif" }}>
+      <CalendarDays size={22} color="#f08a5d" style={{ flexShrink:0 }} />
+      <span style={{ flex:1, minWidth:0, textAlign:"left" }}>
+        <span style={{ display:"block", fontSize:14.5, fontWeight:700, color:"#f2f1ee" }}>Events &amp; sign-ups on Be There</span>
+        <span style={{ display:"block", fontSize:12.5, color:"#a9acb1", marginTop:2, lineHeight:1.4 }}>{sub}</span>
+      </span>
+      <span style={{ fontSize:13, fontWeight:700, color:"#f08a5d", whiteSpace:"nowrap" }}>Open ↗</span>
+    </a>
+  );
+}
+
 /* Home page for anyone not signed in as a leader */
 function HomeChooser({ status }) {
   const tile = (path, title, sub, color) => (
@@ -824,6 +840,13 @@ function HomeChooser({ status }) {
         {tile("/students", "Students", "Share a prayer request, this week’s lesson, and the Prayer Wall", "#4cad3b")}
         {tile("/parents", "Parents", "This week’s lesson to talk about at home, and family prayer requests", "#b49ad0")}
         {tile("/leaders", "Leaders", "Pray for our students by name", "#3d59a8")}
+        <a href={BE_THERE_URL} target="_blank" rel="noopener noreferrer" style={{ width:"100%", boxSizing:"border-box", textAlign:"left", background:"#1f2023", border:"1px solid #e95e2466", borderLeft:"4px solid #e95e24", borderRadius:12, padding:"14px 16px", textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif", display:"flex", alignItems:"center", gap:12, marginTop:6 }}>
+          <span style={{ flex:1 }}>
+            <span style={{ display:"block", fontSize:16, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>Be There</span>
+            <span style={{ display:"block", fontSize:13, color:"#a9acb1", marginTop:3, lineHeight:1.4 }}>IMPACT events and sign-ups</span>
+          </span>
+          <span style={{ fontSize:13, fontWeight:700, color:"#f08a5d" }}>↗</span>
+        </a>
       </div>
       <button onClick={() => navTo("/admin")} style={{ background:"none", border:"none", color:"#5c6066", fontSize:12, cursor:"pointer", marginTop:28, fontFamily:"'Inter', system-ui, sans-serif" }}>Admin sign-in</button>
     </div>
@@ -1211,12 +1234,13 @@ export function StudentPage() {
 
   if (tab === "calendar") return page(unlocked ? (
     <>
+      <BeThereCard who="student" />
       <EventCards events={events} mode="student" />
       {calendar && calendar.configured
         ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet. Check back soon!" />
-        : <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"20px 0" }}>The calendar is coming soon.</p>}
+        : null}
     </>
-  ) : <CodeUnlock what="calendar" codeSet={info.studentCodeSet} onUnlocked={load} />);
+  ) : <><BeThereCard who="student" /><CodeUnlock what="calendar" codeSet={info.studentCodeSet} onUnlocked={load} /></>);
 
   if (tab === "wall") return page(unlocked ? <PrayerWall /> : <CodeUnlock what="Prayer Wall" codeSet={info.studentCodeSet} onUnlocked={load} />);
 
@@ -2916,10 +2940,9 @@ export function ParentPage() {
   if (tab === "devos") return page(<DevosView series={series} mode="parent" />);
   if (tab === "calendar") return page(
     <>
+      <BeThereCard who="parent" />
       <EventCards events={events} mode="parent" />
-      {calendar && calendar.configured
-        ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet." />
-        : <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"20px 0" }}>The calendar is coming soon.</p>}
+      {calendar && calendar.configured ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet." /> : null}
     </>
   );
   if (tab === "wall") return page(
@@ -4258,7 +4281,7 @@ function AppMain({ settings, role, onStatus }) {
 
       {/* Tabs */}
       <nav style={S.tabs}>
-        {[["pray","Pray"],["wall","Wall"],["lessons","Lessons"],["devos","Devos"],...(calendar && calendar.configured ? [["calendar","Calendar"]] : []),["week","Week"],["roster","Roster"]].map(([v, label]) => (
+        {[["pray","Pray"],["wall","Wall"],["lessons","Lessons"],["devos","Devos"],["calendar","Calendar"],["week","Week"],["roster","Roster"]].map(([v, label]) => (
           <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
             {label}
             {v === "wall" && wallNew > 0 && view !== "wall" && <span style={S.tabBadge}>{wallNew}</span>}
@@ -4706,8 +4729,12 @@ function AppMain({ settings, role, onStatus }) {
 
       {view === "calendar" && (
         <div style={S.importWrap}>
-          <CalendarList cal={calendar} title="Calendar" maxWidth="none" emptyText="Nothing coming up on the BAND calendar." />
-          <p style={{ fontSize:12, color:C.muted, lineHeight:1.5, margin:"0 2px" }}>Events come from BAND and update about every 30 minutes. Tap an event for details.</p>
+          <BeThereCard who="leader" maxWidth="none" />
+          <EventCards events={events} mode="leader" onPrayThrough={prayThroughEvent} />
+          {calendar && calendar.configured && <>
+            <CalendarList cal={calendar} title="Calendar" maxWidth="none" emptyText="Nothing coming up on the BAND calendar." />
+            <p style={{ fontSize:12, color:C.muted, lineHeight:1.5, margin:"0 2px" }}>Events come from BAND and update about every 30 minutes. Tap an event for details.</p>
+          </>}
         </div>
       )}
 
