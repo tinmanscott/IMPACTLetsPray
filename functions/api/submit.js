@@ -2,7 +2,7 @@
 // Nothing here is shown to anyone until an admin approves it in the Inbox.
 //
 // GET  /api/submit  → { open, name, sub, role }   (public: tells the student page what to show)
-// POST /api/submit { name, kind: "request" | "cause" | "info", text, friends: [], grade?, birthday?: "MM-DD", photo?: "data:image/jpeg;base64,…" }
+// POST /api/submit { name, kind: "request" | "cause" | "info" | "gospel", count?, friend?, outcome?, text, friends: [], grade?, birthday?: "MM-DD", photo?: "data:image/jpeg;base64,…" }
 //   (student code or higher)
 import { getSession, publicSettings, json } from "../../lib/auth.js";
 import { addSubmission, savePendingPhoto, decodePhoto } from "../../lib/inbox.js";
@@ -21,7 +21,8 @@ export async function onRequest(context) {
   try { body = await request.json(); } catch (_e) { return json({ error: "Invalid JSON" }, 400); }
 
   const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 80);
-  const kind = body.kind === "cause" ? "cause" : body.kind === "info" ? "info" : "request";
+  const KINDS = ["request", "cause", "info", "gospel"];
+  const kind = KINDS.includes(body.kind) ? body.kind : "request";
   if (name.length < 2) return json({ error: "Please enter your name." }, 400);
 
   // Optional roster details, applied only when an admin approves
@@ -44,7 +45,19 @@ export async function onRequest(context) {
 
   let text = "";
   let friends = [];
-  if (kind === "info") {
+  let gospel = null;
+  if (kind === "gospel") {
+    // A Gospel conversation the student had: how many, who with, how it went, and the story
+    const count = Math.round(Number(body.count));
+    if (!Number.isFinite(count) || count < 1 || count > 50) return json({ error: "How many Gospel conversations did you have?" }, 400);
+    const OUTCOMES = ["shared", "questions", "visit", "trusted"];
+    gospel = {
+      count,
+      friend: String(body.friend || "").trim().replace(/\s+/g, " ").slice(0, 60),
+      outcome: OUTCOMES.includes(body.outcome) ? body.outcome : null,
+    };
+    text = String(body.text || "").trim().slice(0, 1200);
+  } else if (kind === "info") {
     if (!grade && !birthday && !photo) return json({ error: "Add your grade, birthday, or a photo." }, 400);
   } else if (kind === "request") {
     text = String(body.text || "").trim().slice(0, 600);
@@ -61,7 +74,7 @@ export async function onRequest(context) {
   const share = kind === "request" && body.share === true;
   const anonymous = share && body.anonymous === true;
 
-  const result = await addSubmission(env.INTERCEDE_KV, { name, kind, text, friends, grade, birthday, share, anonymous, hasPhoto: !!photo });
+  const result = await addSubmission(env.INTERCEDE_KV, { name, kind, text, friends, grade, birthday, share, anonymous, hasPhoto: !!photo, gospel });
   if (!result.ok) return json({ error: result.error }, 429);
   if (photo) await savePendingPhoto(env.INTERCEDE_KV, result.id, photo);
   return json({ ok: true, id: result.id });

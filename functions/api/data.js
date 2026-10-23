@@ -27,11 +27,11 @@ export async function onRequest(context) {
     return new Response(JSON.stringify({ error: "Use /api/auth to change settings" }), { status: 403, headers });
   }
 
-  // Team goals: { weeklyPct, gospelGoal }
+  // Team goals: { weeklyPct, gospelGoal, convGoal }
   if (key === "goals") {
     if (request.method === "GET") {
       const data = await env.INTERCEDE_KV.get("goals");
-      return new Response(data || JSON.stringify({ weeklyPct: 100, gospelGoal: 0 }), { headers });
+      return new Response(data || JSON.stringify({ weeklyPct: 100, gospelGoal: 0, convGoal: 0 }), { headers });
     }
     if (request.method === "POST") {
       try {
@@ -39,6 +39,7 @@ export async function onRequest(context) {
         const clean = {
           weeklyPct: Math.min(100, Math.max(10, Math.round(Number(g.weeklyPct) || 100))),
           gospelGoal: Math.min(10000, Math.max(0, Math.round(Number(g.gospelGoal) || 0))),
+          convGoal: Math.min(10000, Math.max(0, Math.round(Number(g.convGoal) || 0))), // Gospel conversations per month
         };
         await env.INTERCEDE_KV.put("goals", JSON.stringify(clean));
         return new Response(JSON.stringify({ ok: true, ...clean }), { headers });

@@ -951,6 +951,10 @@ export function StudentPage() {
   const [anonymous, setAnonymous] = React.useState(false);
   const [sharedLast, setSharedLast] = React.useState(false);
   const [photoData, setPhotoData] = React.useState("");
+  const [gCount, setGCount] = React.useState(1);
+  const [gFriend, setGFriend] = React.useState("");
+  const [gOutcome, setGOutcome] = React.useState("");
+  const [lastKind, setLastKind] = React.useState("");
   const [photoBusyS, setPhotoBusyS] = React.useState(false);
   const studentPhotoRef = React.useRef(null);
 
@@ -982,13 +986,14 @@ export function StudentPage() {
     const list = friends.map(f => f.trim()).filter(Boolean);
     if (name.trim().length < 2) return setErr("Please enter your first and last name.");
     if (kind === "request" && text.trim().length < 3) return setErr("Please write your prayer request.");
+    if (kind === "gospel" && (!gCount || gCount < 1)) return setErr("How many Gospel conversations did you have?");
     if (kind === "cause" && !list.length) return setErr("Add at least one friend’s name.");
     if ((bMonth && !bDay) || (!bMonth && bDay)) return setErr("Pick both the month and day of your birthday.");
     const birthday = bMonth && bDay ? `${bMonth}-${bDay}` : "";
     if (kind === "info" && !grade && !birthday && !photoData) return setErr("Add your grade, birthday, or a photo.");
     setBusy(true);
     try {
-      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: kind === "request" && share, anonymous: kind === "request" && share && anonymous, photo: photoData || undefined }) });
+      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: kind === "request" && share, anonymous: kind === "request" && share && anonymous, photo: photoData || undefined, count: kind === "gospel" ? gCount : undefined, friend: kind === "gospel" ? gFriend.trim() : undefined, outcome: kind === "gospel" ? (gOutcome || undefined) : undefined }) });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) { load(); throw new Error("Please enter the student code again."); }
       if (!res.ok) throw new Error(data.error || "That didn’t send. Try again.");
@@ -996,6 +1001,7 @@ export function StudentPage() {
       lsSet(STUDENT_GRADE_KEY, grade || null);
       lsSet(STUDENT_BDAY_KEY, birthday || null);
       setSharedLast(kind === "request" && share);
+      setLastKind(kind); setGCount(1); setGFriend(""); setGOutcome("");
       setDone(true); setText(""); setFriends(["", "", ""]); setShare(false); setAnonymous(false); setPhotoData("");
     } catch (e) { setErr(e.message); }
     setBusy(false);
@@ -1031,11 +1037,12 @@ export function StudentPage() {
       {header}
       <div style={{ ...card, alignItems:"center", textAlign:"center" }}>
         <Heart size={40} color="#e95e24" fill="#e95e24" />
-        <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>Got it. Thank you!</p>
+        <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>{lastKind === "gospel" ? "Thank you for sharing Jesus!" : "Got it. Thank you!"}</p>
         <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>
-          Your leaders will see this and start praying.{sharedLast ? " Once a leader approves it, it will show on the Prayer Wall too." : ""}
+          {lastKind === "gospel" ? "Your leaders will celebrate this with you and keep praying for your friend." : "Your leaders will see this and start praying."}{sharedLast ? " Once a leader approves it, it will show on the Prayer Wall too." : ""}
         </p>
-        <button onClick={() => { setDone(false); setKind("request"); }} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share something else</button>
+        {lastKind === "gospel" && <div style={{ width:"100%", marginTop:8, textAlign:"left" }}><GospelTracker compact /></div>}
+        <button onClick={() => { setDone(false); setKind(lastKind === "gospel" ? "gospel" : "request"); }} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share something else</button>
         <button onClick={() => { setDone(false); setTab("wall"); }} style={{ background:"none", border:"none", color:"#7fd06c", fontSize:14, fontWeight:600, cursor:"pointer", marginTop:4 }}>Go to the Prayer Wall →</button>
       </div>
     </div>
@@ -1098,12 +1105,40 @@ export function StudentPage() {
           <button onClick={() => studentPhotoRef.current && studentPhotoRef.current.click()} disabled={photoBusyS} style={{ background:"none", border:"1px solid #34363a", color:"#f2f1ee", borderRadius:8, padding:"7px 10px", fontSize:13, cursor:"pointer", flexShrink:0 }}>{photoBusyS ? "…" : photoData ? "Change" : "Choose"}</button>
           {photoData && <button onClick={() => setPhotoData("")} aria-label="Remove photo" style={{ background:"none", border:"none", color:"#80848a", cursor:"pointer", padding:2, display:"flex" }}><X size={16} /></button>}
         </div>
-        <div style={{ display:"flex", gap:6 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
           <button onClick={() => setKind("request")} style={chip(kind === "request")}>Prayer request</button>
           <button onClick={() => setKind("cause")} style={chip(kind === "cause")}>CAUSE Circle</button>
+          <button onClick={() => setKind("gospel")} style={chip(kind === "gospel")}>Gospel conversation</button>
           <button onClick={() => setKind("info")} style={chip(kind === "info")}>Just my info</button>
         </div>
-        {kind === "info" ? (
+        {kind === "gospel" ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div>
+              <label style={authLbl}>How many Gospel conversations did you have?</label>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <button onClick={() => setGCount(c => Math.max(1, c - 1))} aria-label="One fewer" style={{ width:44, height:44, borderRadius:10, border:"1px solid #34363a", background:"#1f2023", color:"#f2f1ee", fontSize:22, cursor:"pointer" }}>−</button>
+                <span style={{ minWidth:40, textAlign:"center", fontSize:28, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", fontVariantNumeric:"tabular-nums" }}>{gCount}</span>
+                <button onClick={() => setGCount(c => Math.min(50, c + 1))} aria-label="One more" style={{ width:44, height:44, borderRadius:10, border:"1px solid #34363a", background:"#1f2023", color:"#f2f1ee", fontSize:22, cursor:"pointer" }}>+</button>
+              </div>
+            </div>
+            <div>
+              <label style={authLbl}>Who with? <span style={{ opacity:0.6, fontWeight:400, textTransform:"none" }}>(optional, first name is fine)</span></label>
+              <input value={gFriend} onChange={e => setGFriend(e.target.value)} placeholder="e.g. a friend from your CAUSE Circle" style={authInp} />
+            </div>
+            <div>
+              <label style={authLbl}>How did it go? <span style={{ opacity:0.6, fontWeight:400, textTransform:"none" }}>(optional)</span></label>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {GOSPEL_OUTCOMES.map(([v, l]) => (
+                  <button key={v} onClick={() => setGOutcome(o => o === v ? "" : v)} style={{ padding:"8px 12px", borderRadius:18, border:`1px solid ${gOutcome === v ? (v === "trusted" ? "#e95e24" : "#5aba47") : "#34363a"}`, background: gOutcome === v ? (v === "trusted" ? "#2a1a12" : "#18241a") : "none", color: gOutcome === v ? "#f2f1ee" : "#80848a", fontSize:13, cursor:"pointer" }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label style={authLbl}>Tell us the story <span style={{ opacity:0.6, fontWeight:400, textTransform:"none" }}>(optional)</span></label>
+              <textarea value={text} onChange={e => setText(e.target.value)} rows={4} maxLength={1200} placeholder="What happened? How can we pray for them?" style={{ ...authInp, resize:"vertical", lineHeight:1.5 }} />
+            </div>
+          </div>
+        ) : kind === "info" ? (
           <p style={{ margin:0, fontSize:13, color:"#80848a", lineHeight:1.5 }}>Sends your grade, birthday, and photo to your leaders so they can update the roster.</p>
         ) : kind === "request" ? (
           <div>
@@ -1143,6 +1178,55 @@ export function StudentPage() {
   );
 }
 
+/* ── Gospel conversations ── */
+const GOSPEL_OUTCOMES = [
+  ["shared", "I shared the Gospel"],
+  ["questions", "They had questions"],
+  ["visit", "They want to come to church"],
+  ["trusted", "They trusted Jesus! 🎉"],
+];
+const outcomeLabel = o => (GOSPEL_OUTCOMES.find(([v]) => v === o) || [null, ""])[1];
+const monthKey = ts => { const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}`; };
+function gospelTotals(people) {
+  const thisMonth = monthKey(Date.now());
+  let month = 0, all = 0, trusted = 0;
+  for (const p of people) for (const g of p.gospelLog || []) {
+    all += g.count || 0;
+    if (monthKey(g.at) === thisMonth) month += g.count || 0;
+    if (g.outcome === "trusted") trusted++;
+  }
+  return { month, all, trusted };
+}
+
+/* ── Group Gospel tracker (students see totals only) ── */
+function GospelTracker({ compact }) {
+  const [st, setSt] = React.useState(null);
+  React.useEffect(() => {
+    fetch("/api/wall?action=stats", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(setSt).catch(() => {});
+  }, []);
+  if (!st || (!st.month && !st.goal)) return null;
+  const pct = st.goal > 0 ? Math.min(100, Math.round((st.month / st.goal) * 100)) : 0;
+  const met = st.goal > 0 && st.month >= st.goal;
+  return (
+    <div style={{ width:"100%", maxWidth:400, boxSizing:"border-box", background:"#1f2023", border:`1px solid ${met ? "#e95e24" : "#34363a"}`, borderRadius:14, padding:"14px 16px", marginBottom: compact ? 0 : 14 }}>
+      <div style={{ fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", fontWeight:700, color:"#e95e24" }}>Gospel conversations · {st.monthName}</div>
+      <div style={{ display:"flex", alignItems:"baseline", gap:6, margin:"6px 0 8px" }}>
+        <span style={{ fontSize:34, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{st.month}</span>
+        {st.goal > 0 && <span style={{ fontSize:15, color:"#80848a", fontWeight:600 }}>of {st.goal} goal</span>}
+      </div>
+      {st.goal > 0 && (
+        <div style={{ height:10, background:"#2b2d31", borderRadius:5, overflow:"hidden" }}>
+          <div style={{ height:"100%", width:`${pct}%`, background:"linear-gradient(90deg, #3c58a7, #5aba47 55%, #e95e24)", borderRadius:5, transition:"width 0.8s ease" }} />
+        </div>
+      )}
+      <p style={{ margin:"8px 0 0", fontSize:13, color:"#80848a", lineHeight:1.45 }}>
+        {met ? "We hit our goal! Keep sharing Jesus. 🎉" : st.goal > 0 ? `${st.goal - st.month} more to reach our goal this month.` : "Conversations our group has had this month."}
+        {st.trusted > 0 && <><br /><span style={{ color:"#f2f1ee" }}>🎉 {st.trusted} friend{st.trusted === 1 ? "" : "s"} trusted Jesus this month!</span></>}
+      </p>
+    </div>
+  );
+}
+
 /* ── Prayer Wall (students) ── */
 const WALL_PRAYED_KEY = "lp-wall-prayed";
 
@@ -1173,6 +1257,7 @@ function PrayerWall() {
   if (!posts) return <p style={{ color:"#80848a", fontSize:14 }}>Loading…</p>;
   return (
     <div style={wrap}>
+      <GospelTracker />
       <p style={{ margin:"0 0 6px", fontSize:13, color:"#80848a", lineHeight:1.5, textAlign:"center" }}>Take a moment to pray for each other. Tap 🙏 when you do.</p>
       {posts.length === 0 && <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"24px 0" }}>No requests on the wall right now.</p>}
       {posts.map(p => {
@@ -1225,6 +1310,7 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
   const [skipInfo, setSkipInfo] = React.useState({});
   const [skipWall, setSkipWall] = React.useState({});
   const [skipPhoto, setSkipPhoto] = React.useState({});
+  const [skipCause, setSkipCause] = React.useState({});
   const [wall, setWall] = React.useState([]);
   const loadWall = React.useCallback(() => {
     fetch("/api/wall").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setWall(l)).catch(() => {});
@@ -1255,6 +1341,18 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
     };
     const applyContent = p => {
       if (item.kind === "info") return { ...p, updatedAt: Date.now() };
+      if (item.kind === "gospel") {
+        const g = item.gospel || { count: 1 };
+        const entry = { id: genId(), at: item.createdAt || Date.now(), count: g.count || 1, friend: g.friend || "", outcome: g.outcome || null, story: text };
+        let causeCircle = p.causeCircle || [];
+        if (g.friend && !skipCause[item.id]) {
+          const hit = causeCircle.some(f => normName(f.name) === normName(g.friend));
+          causeCircle = hit
+            ? causeCircle.map(f => normName(f.name) === normName(g.friend) ? { ...f, shared: true } : f)
+            : [...causeCircle, { id: genId(), name: g.friend, shared: true }];
+        }
+        return { ...p, causeCircle, gospelLog: [entry, ...(p.gospelLog || [])], updatedAt: Date.now() };
+      }
       if (item.kind === "request") return { ...p, prayerRequests: [...(p.prayerRequests || []), text], updatedAt: Date.now() };
       const have = new Set((p.causeCircle || []).map(f => normName(f.name)));
       const add = friends.filter(f => !have.has(normName(f))).map(f => ({ id: genId(), name: f, shared: false }));
@@ -1286,25 +1384,42 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
     <div style={S.importWrap}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><InboxIcon size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Student Inbox</p></div>
       <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
-        Prayer requests, CAUSE Circle names, grades, birthdays and photos students send from <b style={{ color:C.cream }}>{location.origin}/submit</b>. Nothing shows on a prayer card until you approve it.
+        Prayer requests, CAUSE Circle names, Gospel conversations, grades, birthdays and photos students send from <b style={{ color:C.cream }}>{location.origin}/submit</b>. Nothing shows on a prayer card until you approve it.
         {!studentCodeSet && <span style={{ color:C.orange }}> Set a student code in App Settings (People tab) to open the page.</span>}
       </p>
       {items.length === 0 && <p style={S.reportEmpty}>All caught up. No new submissions.</p>}
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
         {items.slice().sort((a, b) => a.createdAt - b.createdAt).map(item => {
           const chosen = match[item.id] ?? guessPerson(item.name, choices);
-          const value = edits[item.id] ?? (item.kind === "request" ? item.text : (item.friends || []).join(", "));
+          const value = edits[item.id] ?? (item.kind === "request" || item.kind === "gospel" ? item.text : (item.friends || []).join(", "));
           return (
             <div key={item.id} style={box}>
               <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
                 <span style={{ fontSize:14, color:C.cream, fontWeight:600 }}>{item.name}</span>
-                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : "Prayer request"}</span>
+                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : item.kind === "gospel" ? { background:"#2a1a12", color:C.orange } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : item.kind === "gospel" ? "Gospel conversation" : "Prayer request"}</span>
                 <span style={{ marginLeft:"auto", fontSize:11, color:C.muted }}>{timeAgo(item.createdAt)}</span>
               </div>
-              {item.kind !== "info" && (
+              {item.kind === "gospel" && item.gospel && (
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"baseline", fontSize:13.5, color:C.cream }}>
+                  <span style={{ fontSize:20, fontWeight:800, color:C.orange, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{item.gospel.count}</span>
+                  <span>conversation{item.gospel.count === 1 ? "" : "s"}{item.gospel.friend ? <> with <b>{item.gospel.friend}</b></> : ""}</span>
+                  {item.gospel.outcome && <span style={{ ...S.badgeSm, background: item.gospel.outcome === "trusted" ? "#2a1a12" : C.accentBg, color: item.gospel.outcome === "trusted" ? C.orange : C.accentLight, textTransform:"none", letterSpacing:0 }}>{outcomeLabel(item.gospel.outcome)}</span>}
+                </div>
+              )}
+              {item.kind === "gospel" && !value && !edits[item.id] ? null : item.kind !== "info" && (
                 <textarea value={value} onChange={e => setEdits(prev => ({ ...prev, [item.id]: e.target.value }))} rows={item.kind === "request" ? 3 : 2}
                   style={{ ...S.reqInput, resize:"vertical", lineHeight:1.45, fontSize:13.5 }} />
               )}
+              {item.kind === "gospel" && item.gospel && item.gospel.friend && (() => {
+                const target = choices.find(p => p.id === chosen);
+                const inCircle = target && (target.causeCircle || []).some(f => normName(f.name) === normName(item.gospel.friend));
+                return (
+                  <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer", lineHeight:1.45 }}>
+                    <input type="checkbox" checked={!skipCause[item.id]} onChange={e => setSkipCause(prev => ({ ...prev, [item.id]: !e.target.checked }))} style={{ marginTop:2, accentColor:C.accent }} />
+                    <span>{inCircle ? <>Mark <b>{item.gospel.friend}</b> as “heard the Gospel” in their CAUSE Circle</> : <>Add <b>{item.gospel.friend}</b> to their CAUSE Circle as “heard the Gospel”</>}</span>
+                  </label>
+                );
+              })()}
               {item.hasPhoto && (
                 <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                   <img src={pendingPhotoUrl(item.id)} alt="Photo the student sent" style={{ width:64, height:64, borderRadius:"50%", objectFit:"cover", background:C.faint, flexShrink:0 }} />
@@ -1460,6 +1575,22 @@ function GoalsCard({ goals, activePeople, weekHistory, smallGroups, myGroupId })
         </div>
       )}
 
+      {(() => {
+        const gt = gospelTotals(activePeople);
+        if (!gt.all && !(goals.convGoal > 0)) return null;
+        const monthName = new Date().toLocaleDateString("en-US", { month: "long" });
+        return (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 }}>
+              <span style={label}>Gospel conversations in {monthName}</span>
+              <span style={{ fontSize:12.5, color:C.cream, fontWeight:600 }}>{gt.month}{goals.convGoal > 0 ? ` / ${goals.convGoal}` : ""}</span>
+            </div>
+            {goals.convGoal > 0 && <Bar value={gt.month} max={goals.convGoal} color={C.orange} />}
+            <p style={{ margin:"6px 0 0", fontSize:12, color:C.muted }}>{gt.all} all time{gt.trusted > 0 ? ` · ${gt.trusted} friend${gt.trusted === 1 ? "" : "s"} trusted Jesus 🎉` : ""}</p>
+          </div>
+        );
+      })()}
+
       {(goals.gospelGoal > 0 || friends > 0) && (
         <div>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 }}>
@@ -1477,8 +1608,9 @@ function GoalsCard({ goals, activePeople, weekHistory, smallGroups, myGroupId })
 function GoalsEditor({ goals, onSave }) {
   const [pct, setPct] = React.useState(goals.weeklyPct || 100);
   const [gospel, setGospel] = React.useState(goals.gospelGoal || 0);
+  const [conv, setConv] = React.useState(goals.convGoal || 0);
   const [msg, setMsg] = React.useState("");
-  React.useEffect(() => { setPct(goals.weeklyPct || 100); setGospel(goals.gospelGoal || 0); }, [goals.weeklyPct, goals.gospelGoal]);
+  React.useEffect(() => { setPct(goals.weeklyPct || 100); setGospel(goals.gospelGoal || 0); setConv(goals.convGoal || 0); }, [goals.weeklyPct, goals.gospelGoal, goals.convGoal]);
   return (
     <div style={{ ...S.reportBox, marginTop:14, display:"flex", flexDirection:"column", gap:12 }}>
       <div style={{ display:"flex", alignItems:"center", gap:8 }}><Target size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Team Goals</p></div>
@@ -1492,8 +1624,12 @@ function GoalsEditor({ goals, onSave }) {
         <span style={{ flex:1 }}>Gospel shared goal <span style={{ color:C.muted }}>(CAUSE friends, 0 = none)</span></span>
         <input type="number" min={0} max={10000} value={gospel} onChange={e => setGospel(e.target.value)} style={{ ...S.gradeSelect, width:72 }} />
       </label>
+      <label style={{ display:"flex", alignItems:"center", gap:10, fontSize:13, color:C.cream }}>
+        <span style={{ flex:1 }}>Gospel conversations per month <span style={{ color:C.muted }}>(0 = none)</span></span>
+        <input type="number" min={0} max={10000} value={conv} onChange={e => setConv(e.target.value)} style={{ ...S.gradeSelect, width:72 }} />
+      </label>
       <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <button onClick={async () => { setMsg(""); try { await onSave({ weeklyPct: pct, gospelGoal: Number(gospel) || 0 }); setMsg("Saved."); } catch (_e) { setMsg("Couldn’t save."); } }} style={S.confirmBtn}>Save goals</button>
+        <button onClick={async () => { setMsg(""); try { await onSave({ weeklyPct: pct, gospelGoal: Number(gospel) || 0, convGoal: Number(conv) || 0 }); setMsg("Saved."); } catch (_e) { setMsg("Couldn’t save."); } }} style={S.confirmBtn}>Save goals</button>
         {msg && <span style={{ fontSize:12, color: msg === "Saved." ? C.accentLight : "#e07a5f" }}>{msg}</span>}
       </div>
     </div>
@@ -1603,7 +1739,7 @@ function AppMain({ settings, role, onStatus }) {
   const [rosterSmallGroup, setRosterSmallGroup] = useState("all");
 
   // Goals + student inbox
-  const [goals, setGoals] = useState({ weeklyPct: 100, gospelGoal: 0 });
+  const [goals, setGoals] = useState({ weeklyPct: 100, gospelGoal: 0, convGoal: 0 });
   const [submissions, setSubmissions] = useState([]);
 
   // CAUSE Circle
@@ -1663,7 +1799,7 @@ function AppMain({ settings, role, onStatus }) {
     const res = await fetch("/api/data?key=goals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error("save failed");
-    setGoals({ weeklyPct: data.weeklyPct, gospelGoal: data.gospelGoal });
+    setGoals({ weeklyPct: data.weeklyPct, gospelGoal: data.gospelGoal, convGoal: data.convGoal });
   }
 
   // Keep the service worker fresh and skip today's reminder once the app is opened
@@ -2543,6 +2679,23 @@ function AppMain({ settings, role, onStatus }) {
                           )}
                         </div>
                       )}
+                      {current && (current.gospelLog || []).length > 0 && (() => {
+                        const log = current.gospelLog;
+                        const total = log.reduce((n, g) => n + (g.count || 0), 0);
+                        const latest = log[0];
+                        return (
+                          <div style={S.gospelBox}>
+                            <div style={S.causeHead}>
+                              <span style={{ ...S.causeLabel, color: C.orange }}>Gospel conversations</span>
+                              <span style={{ fontSize:13, fontWeight:800, color:C.cream }}>{total}</span>
+                            </div>
+                            <div style={{ fontSize:12.5, color:C.muted, lineHeight:1.45 }}>
+                              Latest {timeAgo(latest.at)}{latest.friend ? ` with ${latest.friend}` : ""}{latest.outcome ? ` · ${outcomeLabel(latest.outcome)}` : ""}
+                            </div>
+                            {latest.story && <p style={{ margin:"6px 0 0", fontSize:13, color:C.cream, lineHeight:1.45 }}>“{latest.story.length > 180 ? latest.story.slice(0, 180) + "…" : latest.story}”</p>}
+                          </div>
+                        );
+                      })()}
                       {current && causeFor !== current.id && (
                         <button onClick={() => { setCauseFor(current.id); setCauseText(""); setReqFor(null); }} style={S.addReqTrigger}>
                           <Plus size={13} style={{ marginRight: 4 }} /> {(current.causeCircle || []).length ? "Add to CAUSE Circle" : "CAUSE Circle friend"}
@@ -2844,6 +2997,7 @@ function AppMain({ settings, role, onStatus }) {
                       {(p.prayerRequests || []).length > 0 && <span style={S.reqCountBadge}>{p.prayerRequests.length} req</span>}
                       {p.birthday && <span style={S.bdayBadgeSm}><Cake size={9} style={{ marginRight: 3 }} />{formatBirthday(p.birthday)}</span>}
                       {(p.causeCircle || []).length > 0 && <span style={S.reqCountBadge}>{p.causeCircle.length} CAUSE</span>}
+                      {(p.gospelLog || []).length > 0 && <span style={{ ...S.reqCountBadge, color: C.orange }}>{p.gospelLog.reduce((n, g) => n + (g.count || 0), 0)} Gospel</span>}
                     </div>
                   </div>
                   <div style={S.personActions}>
@@ -3108,6 +3262,39 @@ function AppMain({ settings, role, onStatus }) {
           <GoalsEditor goals={goals} onSave={saveGoals} />
 
           {(() => {
+            const stories = activePeople.flatMap(p => (p.gospelLog || []).map(g => ({ ...g, who: p.name }))).sort((a, b) => b.at - a.at);
+            const gt = gospelTotals(activePeople);
+            return (
+              <div style={{ ...S.reportBox, marginTop:14 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}><BookOpen size={16} color={C.orange} /><p style={{ ...S.reportTitle, margin:0, color:C.orange }}>Gospel Conversations</p></div>
+                {stories.length === 0 ? (
+                  <p style={S.reportEmpty}>When students log Gospel conversations on the student page and you approve them, their stories collect here.</p>
+                ) : (
+                  <>
+                    <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+                      {[[gt.month, "this month"], [gt.all, "all time"], [gt.trusted, "trusted Jesus"]].map(([n, l]) => (
+                        <div key={l} style={{ ...S.statChip, flex:1 }}><span style={S.statNum}>{n}</span><span style={S.statLbl}>{l}</span></div>
+                      ))}
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                      {stories.slice(0, 25).map(g => (
+                        <div key={g.id} style={{ borderTop:`1px solid ${C.faint}`, paddingTop:10 }}>
+                          <div style={{ fontSize:13, color:C.cream }}>
+                            <b>{g.who}</b> · {g.count} conversation{g.count === 1 ? "" : "s"}{g.friend ? ` with ${g.friend}` : ""}
+                            <span style={{ color:C.muted }}> · {timeAgo(g.at)}</span>
+                          </div>
+                          {g.outcome && <div style={{ fontSize:12, color: g.outcome === "trusted" ? C.orange : C.accentLight, marginTop:2 }}>{outcomeLabel(g.outcome)}</div>}
+                          {g.story && <p style={{ margin:"4px 0 0", fontSize:13, color:C.muted, lineHeight:1.45 }}>{g.story}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {(() => {
             const circles = activePeople.filter(p => (p.causeCircle || []).length > 0);
             const friends = circles.reduce((n, p) => n + p.causeCircle.length, 0);
             const shared = circles.reduce((n, p) => n + p.causeCircle.filter(f => f.shared).length, 0);
@@ -3283,6 +3470,7 @@ const S = {
   cardPhotoWrap: { alignSelf: "center", background: "#f3eee6", padding: "7px 7px 20px", borderRadius: 4, boxShadow: "0 6px 18px rgba(0,0,0,0.45)", marginBottom: 18 },
   cardPhoto: { width: 132, height: 132, objectFit: "cover", display: "block", borderRadius: 2, background: C.faint, pointerEvents: "none" },
   sgBadge: { background: "#2a2433", color: "#b49ad0", display: "inline-flex", alignItems: "center", textTransform: "none", letterSpacing: "0.02em" },
+  gospelBox: { background: "#2a1a12", border: `1px solid ${C.orange}40`, borderRadius: 10, padding: "12px 14px", marginTop: 12 },
   causeBox: { background: C.accentBg, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "12px 14px", marginTop: 12 },
   causeHead: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 8 },
   causeLabel: { fontSize: 10, color: C.accentLight, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 },
