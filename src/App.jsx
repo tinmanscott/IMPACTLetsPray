@@ -805,15 +805,16 @@ function LockScreen({ status, onSignedIn, mode = "leader" }) {
   );
 }
 
-/* Link to the Be There app (IMPACT events and sign-ups) */
+/* Link to the Be There app, where students and parents share games, concerts and performances so leaders can come support them */
 const BE_THERE_URL = "https://impactbethere.app";
 function BeThereCard({ maxWidth = 400, who = "student" }) {
-  const sub = who === "parent" ? "See what’s coming up and sign your student up." : who === "leader" ? "Event details, sign-ups and who’s coming." : "See what’s coming up and sign up.";
+  const title = who === "parent" ? "Does your student have a game or concert coming up?" : who === "leader" ? "Go be there for your students" : "Got a game, concert or play coming up?";
+  const sub = who === "parent" ? "Add it on Be There so our leaders can come cheer them on." : who === "leader" ? "See students’ games, concerts and performances on Be There, and show up to support them." : "Add it on Be There so our leaders can come cheer you on.";
   return (
     <a href={BE_THERE_URL} target="_blank" rel="noopener noreferrer" style={{ width:"100%", maxWidth, boxSizing:"border-box", display:"flex", alignItems:"center", gap:12, background:"#2a1c15", border:"1px solid #e95e2466", borderRadius:12, padding:"12px 14px", marginBottom:14, textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif" }}>
       <CalendarDays size={22} color="#f08a5d" style={{ flexShrink:0 }} />
       <span style={{ flex:1, minWidth:0, textAlign:"left" }}>
-        <span style={{ display:"block", fontSize:14.5, fontWeight:700, color:"#f2f1ee" }}>Events &amp; sign-ups on Be There</span>
+        <span style={{ display:"block", fontSize:14.5, fontWeight:700, color:"#f2f1ee" }}>{title}</span>
         <span style={{ display:"block", fontSize:12.5, color:"#a9acb1", marginTop:2, lineHeight:1.4 }}>{sub}</span>
       </span>
       <span style={{ fontSize:13, fontWeight:700, color:"#f08a5d", whiteSpace:"nowrap" }}>Open ↗</span>
@@ -843,7 +844,7 @@ function HomeChooser({ status }) {
         <a href={BE_THERE_URL} target="_blank" rel="noopener noreferrer" style={{ width:"100%", boxSizing:"border-box", textAlign:"left", background:"#1f2023", border:"1px solid #e95e2466", borderLeft:"4px solid #e95e24", borderRadius:12, padding:"14px 16px", textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif", display:"flex", alignItems:"center", gap:12, marginTop:6 }}>
           <span style={{ flex:1 }}>
             <span style={{ display:"block", fontSize:16, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>Be There</span>
-            <span style={{ display:"block", fontSize:13, color:"#a9acb1", marginTop:3, lineHeight:1.4 }}>IMPACT events and sign-ups</span>
+            <span style={{ display:"block", fontSize:13, color:"#a9acb1", marginTop:3, lineHeight:1.4 }}>Tell us about your games, concerts and performances so we can come support you</span>
           </span>
           <span style={{ fontSize:13, fontWeight:700, color:"#f08a5d" }}>↗</span>
         </a>
@@ -1552,9 +1553,13 @@ const bibleLink = ref => `https://www.biblegateway.com/passage/?search=${encodeU
 const devoDate = (week, d) => { const x = new Date(week.date + "T12:00:00"); x.setDate(x.getDate() + d.day); return ymd(x); };
 const DEVO_KEY = (weekId, devoId) => `lp-devo-${weekId}-${devoId}`;
 
-function DevoCard({ week, devo, open, onToggle, isToday, mode }) {
+function DevoCard({ week, devo, open, onToggle, isToday, mode, count, onMarked }) {
   const [done, setDone] = React.useState(() => lsGet(DEVO_KEY(week.id, devo.id)) === "1");
-  function mark() { const v = !done; setDone(v); lsSet(DEVO_KEY(week.id, devo.id), v ? "1" : "0"); }
+  function mark() {
+    const v = !done; setDone(v); lsSet(DEVO_KEY(week.id, devo.id), v ? "1" : "0");
+    fetch("/api/devos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ weekId: week.id, devoId: devo.id, done: v }) })
+      .then(() => onMarked && onMarked()).catch(() => {});
+  }
   const date = devoDate(week, devo);
   const future = date > ymd();
   const head = { fontSize:11, letterSpacing:"0.14em", textTransform:"uppercase", fontWeight:800, color:"#e95e24", marginBottom:4 };
@@ -1566,6 +1571,7 @@ function DevoCard({ week, devo, open, onToggle, isToday, mode }) {
           <span style={{ display:"block", fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", fontWeight:700, color: isToday ? "#8ea3e3" : "#80848a" }}>{isToday ? "Today · " : ""}{DAY_NAMES[new Date(date + "T12:00:00").getDay()]}</span>
           <span style={{ display:"block", fontSize:14.5, color: future && !isToday ? "#a9acb1" : "#f2f1ee", fontWeight:600, lineHeight:1.3 }}>{devo.title || devo.ref || `Day ${devo.day}`}</span>
           {devo.title && devo.ref && <span style={{ display:"block", fontSize:12, color:"#74c464", fontWeight:600, marginTop:1 }}>{devo.ref}</span>}
+          {count && <span style={{ display:"block", fontSize:12, color:"#a9acb1", marginTop:2 }}>✓ {count.s || 0} student{count.s === 1 ? "" : "s"}{count.p ? ` · ${count.p} parent${count.p === 1 ? "" : "s"}` : ""}{count.l ? ` · ${count.l} leader${count.l === 1 ? "" : "s"}` : ""}</span>}
         </span>
         <ChevronRight size={16} color="#80848a" style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s", flexShrink:0 }} />
       </button>
@@ -1604,6 +1610,12 @@ function DevosView({ series, mode = "student" }) {
   const opened = React.useRef(false);
   React.useEffect(() => { if (todayId && !opened.current) { opened.current = true; setOpenId(todayId); } }, [todayId]); // series loads after first render
   const maxWidth = mode === "leader" ? "none" : 400;
+  const [counts, setCounts] = React.useState(null);
+  const loadCounts = React.useCallback(() => {
+    if (mode !== "leader" || !week) return;
+    fetch(`/api/devos?weeks=${encodeURIComponent(week.id)}`, { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(d => d && setCounts(d[week.id] || {})).catch(() => {});
+  }, [mode, week && week.id]);
+  React.useEffect(() => { loadCounts(); }, [loadCounts]);
   if (!week) return (
     <div style={{ width:"100%", maxWidth, textAlign:"center", padding:"28px 0", color:"#80848a", fontSize:14, lineHeight:1.5 }}>
       <BookOpen size={26} color="#80848a" style={{ marginBottom:8 }} /><br />This week’s devos will show up here.
@@ -1624,9 +1636,23 @@ function DevosView({ series, mode = "student" }) {
       </div>
       <div style={{ fontSize:17, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", margin:"0 2px 4px" }}>{week.title ? `Devos: ${week.title}` : "This week’s devos"}</div>
       <p style={{ margin:"0 2px 12px", fontSize:13, color:"#a9acb1", lineHeight:1.5 }}>{intro}{mode !== "leader" && devos.length ? ` ${doneCount} of ${devos.length} done.` : ""}</p>
+      {mode === "leader" && counts && (() => {
+        const tot = Object.values(counts).reduce((a, c) => ({ s: a.s + (c.s || 0), p: a.p + (c.p || 0), l: a.l + (c.l || 0) }), { s: 0, p: 0, l: 0 });
+        return (
+          <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+            {[[tot.s, "by students"], [tot.p, "by parents"], [tot.l, "by leaders"]].map(([n, l]) => (
+              <div key={l} style={{ flex:1, background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"8px 10px" }}>
+                <div style={{ fontSize:20, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", fontVariantNumeric:"tabular-nums" }}>{n}</div>
+                <div style={{ fontSize:11.5, color:"#a9acb1" }}>devos done {l}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       {devos.map(d => (
-        <DevoCard key={week.id + d.id} week={week} devo={d} mode={mode} isToday={devoDate(week, d) === today} open={openId === d.id} onToggle={() => setOpenId(openId === d.id ? null : d.id)} />
+        <DevoCard key={week.id + d.id} week={week} devo={d} mode={mode} count={mode === "leader" && counts ? counts[d.id] || { s: 0 } : null} onMarked={mode === "leader" ? loadCounts : null} isToday={devoDate(week, d) === today} open={openId === d.id} onToggle={() => setOpenId(openId === d.id ? null : d.id)} />
       ))}
+      {mode === "leader" && <p style={{ margin:"4px 2px 0", fontSize:11.5, color:"#80848a", lineHeight:1.5 }}>Counts are taps of “I did today’s devo,” one per phone. Students on the open page aren’t signed in, so there are no names.</p>}
     </div>
   );
 }
@@ -2429,7 +2455,7 @@ function CheckInCard({ people, myGroupId, groupName, isAdmin, goToPerson }) {
 }
 
 /* ── Monthly recap (admin → Report) ── */
-function MonthlyRecap({ people, weekHistory, ministryName }) {
+function MonthlyRecap({ people, weekHistory, ministryName, series }) {
   const months = React.useMemo(() => {
     const out = []; const d = new Date(); d.setDate(1);
     for (let i = 0; i < 6; i++) { out.push({ y: d.getFullYear(), m: d.getMonth() }); d.setMonth(d.getMonth() - 1); }
@@ -2439,6 +2465,16 @@ function MonthlyRecap({ people, weekHistory, ministryName }) {
   const [copied, setCopied] = React.useState(false);
   const { y, m } = months[idx];
   const from = new Date(y, m, 1).getTime(), to = new Date(y, m + 1, 1).getTime();
+  const monthWeeks = ((series && series.weeks) || []).filter(w => (w.devos || []).length && (t => t >= from && t < to)(new Date(w.date + "T12:00:00").getTime())).map(w => w.id);
+  const [devoTot, setDevoTot] = React.useState(null);
+  React.useEffect(() => {
+    if (!monthWeeks.length) { setDevoTot(null); return; }
+    fetch(`/api/devos?weeks=${monthWeeks.join(",")}`, { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(d => {
+      if (!d) return;
+      const all = Object.values(d).flatMap(w => Object.values(w));
+      setDevoTot(all.reduce((a, c) => ({ s: a.s + (c.s || 0), p: a.p + (c.p || 0) }), { s: 0, p: 0 }));
+    }).catch(() => {});
+  }, [monthWeeks.join(",")]);
   const inMonth = t => t >= from && t < to;
   const label = new Date(y, m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const active = people.filter(p => p.active !== false);
@@ -2465,6 +2501,7 @@ function MonthlyRecap({ people, weekHistory, ministryName }) {
     [answeredList.length, answeredList.length === 1 ? "answered prayer" : "answered prayers", ""],
     [convos, "Gospel conversations", sharers ? `by ${sharers} student${sharers === 1 ? "" : "s"}` : ""],
     [trusted, trusted === 1 ? "friend trusted Jesus" : "friends trusted Jesus", ""],
+    ...(devoTot ? [[devoTot.s, "daily devos done by students", devoTot.p ? `+ ${devoTot.p} by parents` : ""]] : []),
   ];
   const textVersion = [
     `${ministryName || "IMPACT Students"} · Let’s Pray recap · ${label}`,
@@ -5207,7 +5244,7 @@ function AppMain({ settings, role, onStatus }) {
       {/* ─── REPORT ─── */}
       {view === "report" && (
         <div style={S.importWrap}>
-          <MonthlyRecap people={people} weekHistory={weekHistory} ministryName={MINISTRY_NAME} />
+          <MonthlyRecap people={people} weekHistory={weekHistory} ministryName={MINISTRY_NAME} series={series} />
           <div style={S.reportBox}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}><BarChart2 size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Weekly Prayer Report</p></div>
