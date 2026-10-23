@@ -1718,6 +1718,15 @@ function calTime(e) {
 const linkify = text => String(text).split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part)
   ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" style={{ color:"#8ea3e3", wordBreak:"break-all" }}>{part}</a> : part);
 
+// The first sign-up / registration link in an event (its link field, or a link in the description)
+const FORM_HOSTS = /(forms\.gle|docs\.google\.com\/forms|forms\.office\.com|jotform|typeform|wufoo|cognitoforms|formstack|churchcenter|onechurch|ministryplatform|planningcenter|eventbrite|signupgenius|subsplash|tithe\.ly|pushpay|ccbchurch|breezechms|rockrms|squarespace|form)/i;
+function signupLink(e) {
+  const links = [e.link, ...String(e.desc || "").match(/https?:\/\/[^\s<>"]+/g) || []].filter(Boolean).map(u => u.replace(/[).,;!?]+$/, ""));
+  if (!links.length) return null;
+  const words = /regist|sign[\s-]?up|form|rsvp|apply|permission|waiver/i.test(e.desc || "") || /regist|sign[\s-]?up|rsvp/i.test(e.title || "");
+  return links.find(u => FORM_HOSTS.test(u)) || (words ? links[0] : null);
+}
+
 function CalendarList({ cal, limit = 0, emptyText, title = "Coming up", maxWidth = 400 }) {
   const [open, setOpen] = React.useState(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -1744,7 +1753,7 @@ function CalendarList({ cal, limit = 0, emptyText, title = "Coming up", maxWidth
           <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color: day === today ? "#74c464" : "#80848a", marginBottom:4 }}>{calDayLabel(day)}</div>
           {items.map(e => {
             const isOpen = open === e.id;
-            const more = e.desc || e.location;
+            const more = e.desc;
             return (
               <div key={e.id} style={{ borderLeft:`3px solid ${e.leadersOnly ? "#e6b34a" : "#3d59a8"}`, padding:"6px 0 6px 10px", marginBottom:4 }}>
                 <button onClick={() => more && setOpen(isOpen ? null : e.id)} aria-expanded={more ? isOpen : undefined} style={{ display:"block", width:"100%", textAlign:"left", background:"none", border:"none", padding:0, cursor: more ? "pointer" : "default", fontFamily:"'Inter', system-ui, sans-serif" }}>
@@ -1755,6 +1764,7 @@ function CalendarList({ cal, limit = 0, emptyText, title = "Coming up", maxWidth
                   <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>{calTime(e)}{e.location ? ` · ${e.location}` : ""}</div>
                 </button>
                 {isOpen && e.desc && <div style={{ fontSize:13, color:"#d9d7d2", lineHeight:1.5, marginTop:6, whiteSpace:"pre-wrap" }}>{linkify(e.desc)}</div>}
+                {signupLink(e) && <a href={signupLink(e)} target="_blank" rel="noopener noreferrer" style={{ display:"inline-flex", alignItems:"center", gap:5, marginTop:7, background:"#4cad3b", color:"#101112", borderRadius:8, padding:"6px 12px", fontSize:13, fontWeight:700, textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif" }}>Register →</a>}
               </div>
             );
           })}
@@ -1914,6 +1924,11 @@ function EventCards({ events, mode = "leader", onPrayThrough }) {
               </ul>
             )}
             {going > 0 && mode !== "leader" && <div style={{ fontSize:12.5, color:"#80848a" }}>{going} going. Pray for every one of them.</div>}
+            {e.link && st.phase === "upcoming" && (
+              <a href={e.link} target="_blank" rel="noopener noreferrer" style={{ alignSelf:"flex-start", background:"#4cad3b", color:"#101112", borderRadius:10, padding:"9px 14px", fontSize:13.5, fontWeight:700, textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                {mode === "leader" ? "Registration form →" : "Register →"}
+              </a>
+            )}
             {mode === "leader" && going > 0 && onPrayThrough && (
               <button onClick={() => onPrayThrough(e.id)} style={{ alignSelf:"flex-start", background:"#e95e24", color:"#fff", border:"none", borderRadius:10, padding:"9px 14px", fontSize:13.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
                 🙏 Pray through the {going} going
@@ -1942,7 +1957,7 @@ function EventsEditor({ people, smallGroups }) {
   function addEvent() {
     const d = new Date(); d.setDate(d.getDate() + 14);
     const id = genId();
-    change(list => [...list, { id, name: "", start: ymd(d), end: ymd(d), focus: "", prayerPoints: "", attendees: [] }]);
+    change(list => [...list, { id, name: "", start: ymd(d), end: ymd(d), focus: "", prayerPoints: "", link: "", attendees: [] }]);
     setOpenId(id);
   }
   function toggleAtt(id, pid) { change(list => list.map(e => e.id !== id ? e : { ...e, attendees: e.attendees.includes(pid) ? e.attendees.filter(x => x !== pid) : [...e.attendees, pid] })); }
@@ -1983,6 +1998,7 @@ function EventsEditor({ people, smallGroups }) {
                     <div style={{ flex:1, minWidth:130 }}><label style={lbl}>Starts</label><input type="date" value={e.start || ""} onChange={x => x.target.value && setEv(e.id, "start", x.target.value)} style={{ ...field, colorScheme:"dark" }} /></div>
                     <div style={{ flex:1, minWidth:130 }}><label style={lbl}>Ends</label><input type="date" value={e.end || ""} onChange={x => x.target.value && setEv(e.id, "end", x.target.value)} style={{ ...field, colorScheme:"dark" }} /></div>
                   </div>
+                  <div><label style={lbl}>Registration link <span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>(optional: shows a Register button until the event starts)</span></label><input value={e.link || ""} onChange={x => setEv(e.id, "link", x.target.value.trim())} placeholder="https://… (your sign-up form)" inputMode="url" style={field} />{e.link && !/^https:\/\//i.test(e.link) && <div style={{ fontSize:12, color:"#e07a5f", marginTop:4 }}>The link needs to start with https://</div>}</div>
                   <div><label style={lbl}>Prayer focus</label><textarea value={e.focus} onChange={x => setEv(e.id, "focus", x.target.value)} rows={3} placeholder="e.g. Pray that every student would meet Jesus this weekend." style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
                   <div><label style={lbl}>Prayer points <span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>(one per line)</span></label><textarea value={e.prayerPoints} onChange={x => setEv(e.id, "prayerPoints", x.target.value)} rows={3} placeholder={"Safe travel\nOpen hearts during worship\nLeaders with energy and wisdom"} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
                   <div>

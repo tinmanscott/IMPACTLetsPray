@@ -89,6 +89,7 @@ export async function onRequest(context) {
           end: day(e.end) || day(e.start),
           focus: clip(e.focus, 1500),
           prayerPoints: clip(e.prayerPoints, 2000),
+          link: /^https:\/\/[^\s]+$/i.test(String(e.link || "").trim()) ? String(e.link).trim().slice(0, 500) : "", // registration form
           attendees: (Array.isArray(e.attendees) ? e.attendees : []).map(x => clip(x, 40)).filter(Boolean).slice(0, 500),
         })).filter(e => e.name && e.start);
         await env.INTERCEDE_KV.put("events", JSON.stringify(clean));
