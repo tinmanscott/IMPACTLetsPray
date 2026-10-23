@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { ChevronLeft, ChevronRight, Heart, Plus, Trash2, Upload, X, RefreshCw, BookOpen, RotateCcw, Cake, BarChart2, Bell, Star, Lightbulb, Camera, Users, Check, Lock, Settings as SettingsIcon, Inbox as InboxIcon, Flame, Target, Send } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Heart, Plus, Trash2, Upload, X, RefreshCw, BookOpen, RotateCcw, Cake, BarChart2, Bell, Star, Lightbulb, Camera, Users, Check, Lock, Settings as SettingsIcon, Inbox as InboxIcon, Flame, Target, Send } from "lucide-react";
 
 const STORAGE_KEY = "intercede-people-v2";
 // Settings loaded from KV on startup
@@ -1012,6 +1012,7 @@ export function StudentPage() {
   const [info, setInfo] = React.useState(null);
   const [series] = useSeries(info && info.role);
   const [events] = useEvents(info && info.role);
+  const calendar = useCalendar(info && info.role);
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -1138,9 +1139,18 @@ export function StudentPage() {
 
   const tabsRow = (
     <div style={{ display:"flex", width:"100%", maxWidth:400, background:"#1f2023", border:"1px solid #34363a", borderRadius:12, padding:4, gap:4, marginBottom:18, boxSizing:"border-box" }}>
-      {[["share","Share"],["wall","Prayer Wall"]].map(([v, l]) => (
+      {[["share","Share"],["wall","Prayer Wall"],...(calendar && calendar.configured ? [["calendar","Calendar"]] : [])].map(([v, l]) => (
         <button key={v} onClick={() => setTab(v)} style={{ flex:1, padding:"10px 0", borderRadius:9, border:"none", background: tab === v ? "#4cad3b" : "none", color: tab === v ? "#101112" : "#80848a", fontWeight: tab === v ? 700 : 500, fontSize:14, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
       ))}
+    </div>
+  );
+
+  if (tab === "calendar") return (
+    <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
+      {header}
+      {tabsRow}
+      <EventCards events={events} mode="student" />
+      <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet. Check back soon!" />
     </div>
   );
 
@@ -1354,6 +1364,47 @@ function useSeries(dep) {
 const artUrl = series => (series && series.art ? (typeof window !== "undefined" && window.__lpArtUrl ? window.__lpArtUrl(series.art) : `/api/art?v=${series.art}`) : null);
 const splitLines = t => String(t || "").split(/\n+/).map(l => l.trim().replace(/^[-•*●▪︎◦]\s*|^\d+[.)]\s*/, "")).filter(Boolean);
 
+/* Memory verse: shows the verse, and lets students practice by hiding words step by step */
+const MEM_KEY = id => `lp-memorized-${id}`;
+function MemoryVerse({ week, mode, sameAsVerse }) {
+  const [level, setLevel] = React.useState(0);           // 0 full · 1 some words hidden · 2 first letters only
+  const [peek, setPeek] = React.useState(false);
+  const [done, setDone] = React.useState(() => lsGet(MEM_KEY(week.id)) === "1");
+  const text = week.memoryText || "";
+  const practice = (mode === "student" || mode === "parent") && text.split(/\s+/).length > 2;
+  const words = text.split(/(\s+)/);
+  let n = 0;
+  const shown = level === 0 || peek ? text : words.map(w => {
+    if (/^\s+$/.test(w) || !w) return w;
+    n++;
+    if (level === 1 && n % 2 === 1) return w;
+    return w.replace(/^([“"‘'(]*)([A-Za-z0-9’']+)(.*)$/, (_m, pre, core, post) => pre + core[0] + core.slice(1).replace(/[A-Za-z0-9’']/g, "_") + post);
+  }).join("");
+  function markDone() { const v = !done; setDone(v); lsSet(MEM_KEY(week.id), v ? "1" : "0"); }
+  const btn = on => ({ flex:1, padding:"7px 4px", borderRadius:8, border:`1px solid ${on ? "#e95e24" : "#34363a"}`, background: on ? "#2c1a12" : "none", color: on ? "#f2f1ee" : "#80848a", fontSize:12.5, fontWeight: on ? 700 : 500, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  return (
+    <div style={{ background:"#2a1c15", border:"1px solid #e95e2440", borderRadius:10, padding:"10px 12px", display:"flex", flexDirection:"column", gap:6 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+        <span style={{ fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:800, color:"#f08a5d" }}>⭐ Memory verse{mode === "parent" ? " · practice together" : ""}</span>
+        {done && practice && <span style={{ marginLeft:"auto", fontSize:11.5, color:"#74c464", fontWeight:700 }}>Memorized ✓</span>}
+      </div>
+      {text && <div aria-live="polite" style={{ fontSize:14.5, color:"#f2f1ee", lineHeight:1.55, fontWeight:500, letterSpacing: level && !peek ? "0.02em" : 0 }}>{shown}</div>}
+      {week.memoryRef && <div style={{ fontSize:12.5, color:"#f08a5d", fontWeight:700 }}>{week.memoryRef}{sameAsVerse && mode !== "parent" ? " · this week’s verse" : ""}</div>}
+      {practice && (
+        <>
+          <div style={{ display:"flex", gap:6, marginTop:4 }} role="group" aria-label="Practice">
+            {[["Read it", 0], ["Hide some", 1], ["First letters", 2]].map(([l, v]) => <button key={v} onClick={() => { setLevel(v); setPeek(false); }} aria-pressed={level === v} style={btn(level === v)}>{l}</button>)}
+          </div>
+          <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+            {level > 0 && <button onPointerDown={() => setPeek(true)} onPointerUp={() => setPeek(false)} onPointerLeave={() => setPeek(false)} onClick={e => e.preventDefault()} style={{ background:"none", border:"none", color:"#80848a", fontSize:12.5, cursor:"pointer", padding:0, fontFamily:"'Inter', system-ui, sans-serif" }}>Hold to peek</button>}
+            {mode === "student" && <button onClick={markDone} style={{ marginLeft:"auto", background:"none", border:"none", color: done ? "#80848a" : "#74c464", fontSize:12.5, fontWeight:600, cursor:"pointer", padding:0, fontFamily:"'Inter', system-ui, sans-serif" }}>{done ? "Undo" : "I’ve got it memorized ✓"}</button>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SeriesCard({ series, mode = "leader" }) {
   const cur = seriesWeek(series);
   if (!cur) return null;
@@ -1361,8 +1412,12 @@ function SeriesCard({ series, mode = "leader" }) {
   const isParent = mode === "parent";
   const ask = splitLines(week.parentPrompt);
   const pray = splitLines(week.parentPray);
-  if (isParent && (upcoming || (!ask.length && !week.parentThink && !pray.length))) return null;
+  if (isParent && (upcoming || (!ask.length && !week.parentThink && !pray.length && !week.memoryText))) return null;
   const art = artUrl(series);
+  const hasMemory = !!(week.memoryRef || week.memoryText);
+  const norm = r => String(r || "").replace(/[\s–—-]+/g, "").toLowerCase();
+  const sameAsVerse = hasMemory && !!week.memoryRef && norm(week.memoryRef) === norm(week.verseRef);
+  const memory = hasMemory && <MemoryVerse week={week} mode={mode} sameAsVerse={sameAsVerse} />;
   const wrap = { width:"100%", maxWidth: mode === "leader" ? "none" : 400, boxSizing:"border-box", background:"linear-gradient(160deg, #1d2236 0%, #1f2023 60%)", border:"1px solid #3d59a855", borderRadius:14, marginBottom:14, overflow:"hidden", textAlign:"left" };
   const eyebrow = { fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#8ea3e3" };
   const head = { fontSize:11, letterSpacing:"0.14em", textTransform:"uppercase", fontWeight:800, color:"#e95e24", marginBottom:4 };
@@ -1387,12 +1442,14 @@ function SeriesCard({ series, mode = "leader" }) {
           </div>
           {week.title && <div style={{ fontSize:17, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", lineHeight:1.25, marginTop:4 }}>{week.title}</div>}
         </div>
-        {!isParent && verse}
+        {!isParent && !sameAsVerse && verse}
+        {!isParent && memory}
         {!isParent && week.prayerPrompt && (
           <div style={{ fontSize:13.5, color:"#f2f1ee", lineHeight:1.45 }}><span style={{ color:"#e95e24", fontWeight:700 }}>Pray: </span>{week.prayerPrompt}</div>
         )}
         {isParent && week.parentThink && <div><div style={head}>Think</div><p style={{ margin:0, fontSize:14, color:"#d9d7d2", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{week.parentThink}</p></div>}
-        {isParent && verse && <div><div style={head}>Read</div>{verse}</div>}
+        {isParent && verse && !sameAsVerse && <div><div style={head}>Read</div>{verse}</div>}
+        {isParent && memory && <div>{sameAsVerse && <div style={head}>Read</div>}{memory}</div>}
         {isParent && ask.length > 0 && <div><div style={head}>Ask</div><div style={{ fontSize:12.5, color:"#80848a", marginBottom:6 }}>Ask your student about this week’s message. Share personally and encourage them.</div>{list(ask)}</div>}
         {isParent && pray.length > 0 && <div><div style={head}>Pray</div><div style={{ fontSize:12.5, color:"#80848a", marginBottom:6 }}>Pray for your student this week that they would:</div>{list(pray)}</div>}
       </div>
@@ -1407,6 +1464,8 @@ function parseRecap(raw) {
   const sections = { intro: [] };
   let cur = "intro";
   for (const l of lines) {
+    const mv = /^(?:weekly\s+)?memory\s+verse\s*:?\s*(.*)$/i.exec(l);
+    if (mv) { cur = "memory"; sections.memory = mv[1] ? [mv[1]] : []; continue; }
     const h = /^(think|read|ask|pray)\s*:?\s*$/i.exec(l);
     if (h) { cur = h[1].toLowerCase(); sections[cur] = []; continue; }
     (sections[cur] = sections[cur] || []).push(l);
@@ -1429,22 +1488,35 @@ function parseRecap(raw) {
   const refM = /^(.+?\d+:\d+(?:\s*[-–]\s*\d+)?)\s+(?:says|reads|tells us)[:,]?\s+([\s\S]*)$/i.exec(read);
   const ask = bullets(sections.ask);
   const pray = bullets(sections.pray);
+  // Memory verse: "Romans 12:2 — Do not be conformed…", "“Do not…” Romans 12:2", or a reference alone
+  const memRaw = para(sections.memory);
+  const REF = /((?:[1-3]\s?)?[A-Z][a-z]+(?:\s(?:of\s)?[A-Z][a-z]+)?\s\d+:\d+(?:\s*[-–]\s*\d+)?)/;
+  let memoryRef = "", memoryText = "";
+  if (memRaw) {
+    const m = REF.exec(memRaw);
+    if (m) {
+      memoryRef = m[1].replace(/\s*[-–]\s*/, "–").trim();
+      memoryText = (memRaw.slice(0, m.index) + " " + memRaw.slice(m.index + m[1].length)).replace(/\(\s*(?:ESV|NIV|NLT|CSB|NKJV|KJV|NASB|NIRV|NIrV|MSG|NRSV)\s*\)/g, "").replace(/\s{2,}/g, " ").replace(/^[\s:—–(),-]+|[\s:—–(),-]+$/g, "").trim();
+    } else memoryText = memRaw;
+  }
   const prayerLead = pray[0] ? `Pray that students would ${pray[0].charAt(0).toLowerCase()}${pray[0].slice(1)}` : "";
   return {
     seriesName: nameM ? nameM[1].trim() : "",
     book: bookM ? bookM[1].trim() : "",
     verseRef: refM ? refM[1].replace(/\s*[-–]\s*/, "–").trim() : "",
     verseText: refM ? refM[2].trim() : read,
+    memoryRef, memoryText,
     parentThink: para(sections.think),
     parentPrompt: ask.join("\n"),
     parentPray: pray.join("\n"),
     prayerPrompt: prayerLead,
-    found: !!(sections.think || sections.read || sections.ask || sections.pray),
+    found: !!(sections.think || sections.read || sections.ask || sections.pray || sections.memory),
   };
 }
 
-// The most recent Wednesday (or today if it is Wednesday), as YYYY-MM-DD
-function lastWeekday(dow = 3) {
+// The most recent message night (Sunday, or today if it is Sunday), as YYYY-MM-DD
+const MESSAGE_DAY = 0; // 0 = Sunday … 6 = Saturday
+function lastWeekday(dow = MESSAGE_DAY) {
   const d = new Date();
   d.setDate(d.getDate() - ((d.getDay() - dow + 7) % 7));
   return ymd(d);
@@ -1458,7 +1530,7 @@ function SeriesEditor() {
   const [confirmDel, setConfirmDel] = React.useState(null);
   const [confirmNew, setConfirmNew] = React.useState(false);
   const [paste, setPaste] = React.useState("");
-  const [pasteDate, setPasteDate] = React.useState(lastWeekday(3));
+  const [pasteDate, setPasteDate] = React.useState(lastWeekday(MESSAGE_DAY));
   const [pasteMsg, setPasteMsg] = React.useState("");
   const [artBusy, setArtBusy] = React.useState(false);
   const artRef = React.useRef(null);
@@ -1469,12 +1541,13 @@ function SeriesEditor() {
   const weeks = (series?.weeks || []);
   function update(fn) { setSeries(prev => fn({ ...prev, weeks: (prev.weeks || []).slice() })); setDirty(true); setMsg(""); }
   function setWeek(id, field, value) { update(sr => ({ ...sr, weeks: sr.weeks.map(w => w.id === id ? { ...w, [field]: value } : w) })); }
-  const blankWeek = date => ({ id: genId(), date, title: "", verseRef: "", verseText: "", prayerPrompt: "", parentPrompt: "", parentThink: "", parentPray: "" });
+  const blankWeek = date => ({ id: genId(), date, title: "", verseRef: "", verseText: "", memoryRef: "", memoryText: "", prayerPrompt: "", parentPrompt: "", parentThink: "", parentPray: "" });
   function addWeek() {
     update(sr => {
       const last = sr.weeks.slice().sort((a, b) => a.date.localeCompare(b.date)).pop();
       const d = last ? new Date(last.date + "T12:00:00") : new Date();
       if (last) d.setDate(d.getDate() + 7);
+      else d.setDate(d.getDate() + ((MESSAGE_DAY - d.getDay() + 7) % 7)); // first week: this coming Sunday
       return { ...sr, weeks: [...sr.weeks, blankWeek(ymd(d))] };
     });
   }
@@ -1484,7 +1557,7 @@ function SeriesEditor() {
     update(sr => {
       const existing = sr.weeks.find(w => w.date === pasteDate);
       const n = sr.weeks.filter(w => w.date < pasteDate).length + 1;
-      const fill = { verseRef: r.verseRef, verseText: r.verseText, parentThink: r.parentThink, parentPrompt: r.parentPrompt, parentPray: r.parentPray };
+      const fill = { verseRef: r.verseRef, verseText: r.verseText, memoryRef: r.memoryRef, memoryText: r.memoryText, parentThink: r.parentThink, parentPrompt: r.parentPrompt, parentPray: r.parentPray };
       const weeksNext = existing
         ? sr.weeks.map(w => w.id === existing.id ? { ...w, ...Object.fromEntries(Object.entries(fill).filter(([, v]) => v)), prayerPrompt: w.prayerPrompt || r.prayerPrompt, title: w.title || `Session ${n}` } : w)
         : [...sr.weeks, { ...blankWeek(pasteDate), ...fill, prayerPrompt: r.prayerPrompt, title: `Session ${n}` }];
@@ -1530,7 +1603,7 @@ function SeriesEditor() {
     <div style={S.importWrap}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><BookOpen size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Teaching Series</p></div>
       <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
-        Each week shows starting on its message date. Leaders and students see the verse and prayer prompt; parents see Think, Read, Ask and Pray on the parent page.
+        Each week shows starting on its Sunday night message date. Leaders and students see the verse and prayer prompt; parents see Think, Read, Ask and Pray on the parent page.
       </p>
       {cur && <SeriesCard series={series} mode="leader" />}
 
@@ -1570,6 +1643,14 @@ function SeriesEditor() {
             <div><label style={lbl}>Message title</label><input value={w.title} onChange={e => setWeek(w.id, "title", e.target.value)} placeholder="e.g. Not ashamed" style={field} /></div>
             <div><label style={lbl}>Verse reference</label><input value={w.verseRef} onChange={e => setWeek(w.id, "verseRef", e.target.value)} placeholder="e.g. Romans 1:16–17" style={field} /></div>
             <div><label style={lbl}>Verse text {hint("(from the translation you teach)")}</label><textarea value={w.verseText} onChange={e => setWeek(w.id, "verseText", e.target.value)} rows={3} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+            <div style={{ background:"#2a1c15", border:"1px solid #e95e2433", borderRadius:10, padding:"10px 12px", display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ ...lbl, color:"#f08a5d", margin:0 }}>⭐ Memory verse {hint("(students, leaders, parents)")}</span>
+                {(w.verseRef || w.verseText) && <button onClick={() => { setWeek(w.id, "memoryRef", w.verseRef || ""); setWeek(w.id, "memoryText", w.verseText || ""); }} style={{ marginLeft:"auto", background:"none", border:`1px solid ${C.border}`, color:C.cream, borderRadius:14, padding:"3px 9px", fontSize:11.5, cursor:"pointer", whiteSpace:"nowrap", fontFamily:"'Inter', system-ui, sans-serif" }}>Same as this week’s verse</button>}
+              </div>
+              <input value={w.memoryRef || ""} onChange={e => setWeek(w.id, "memoryRef", e.target.value)} placeholder="Reference, e.g. Romans 12:2" aria-label={`Week ${i + 1} memory verse reference`} style={field} />
+              <textarea value={w.memoryText || ""} onChange={e => setWeek(w.id, "memoryText", e.target.value)} rows={2} placeholder="The words to memorize (keep it short: one or two verses)" aria-label={`Week ${i + 1} memory verse text`} style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+            </div>
             <div><label style={lbl}>Prayer prompt {hint("(students and leaders)")}</label><textarea value={w.prayerPrompt} onChange={e => setWeek(w.id, "prayerPrompt", e.target.value)} rows={2} placeholder="e.g. Pray that students would not be ashamed of the gospel." style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
             <div style={{ borderTop:`1px solid ${C.faint}`, paddingTop:10, display:"flex", flexDirection:"column", gap:10 }}>
               <span style={{ ...lbl, color:"#b49ad0", margin:0 }}>For parents</span>
@@ -1602,6 +1683,180 @@ function SeriesEditor() {
               <button onClick={() => { update(() => ({ name: "", weeks: [], art: 0 })); setConfirmNew(false); }} style={{ ...S.reqAddBtn, background:"#8a5050", color:"#fff" }}>Clear</button>
               <button onClick={() => setConfirmNew(false)} style={S.cancelBtn}>No</button>
             </span>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Calendar from BAND (or any iCal link) ── */
+function useCalendar(dep) {
+  const [cal, setCal] = React.useState(null);
+  React.useEffect(() => {
+    let alive = true;
+    const load = () => fetch("/api/calendar", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(d => { if (alive && d) setCal(d); }).catch(() => {});
+    load();
+    window.addEventListener("lp-calendar-updated", load);
+    const t = setInterval(load, 15 * 60 * 1000);
+    return () => { alive = false; window.removeEventListener("lp-calendar-updated", load); clearInterval(t); };
+  }, [dep]);
+  return cal;
+}
+const calDate = d => new Date(d.slice(0, 10) + "T12:00:00");
+function calDayLabel(day) {
+  const t = ymd(), tm = ymd(new Date(Date.now() + 864e5));
+  if (day === t) return "Today";
+  if (day === tm) return "Tomorrow";
+  return calDate(day).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+}
+function calTime(e) {
+  const short = d => calDate(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  if (e.allDay) return e.end && e.end !== e.start ? `${short(e.start)} – ${short(e.end)}` : "All day";
+  const t = x => { const [h, m] = x.slice(11, 16).split(":").map(Number); return `${((h + 11) % 12) + 1}${m ? ":" + String(m).padStart(2, "0") : ""}${h < 12 ? " AM" : " PM"}`; };
+  const sameDay = e.end && e.end.slice(0, 10) === e.start.slice(0, 10);
+  return e.end && e.end !== e.start ? (sameDay ? `${t(e.start)} – ${t(e.end)}` : `${t(e.start)} – ${short(e.end)}, ${t(e.end)}`) : t(e.start);
+}
+const linkify = text => String(text).split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part)
+  ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" style={{ color:"#8ea3e3", wordBreak:"break-all" }}>{part}</a> : part);
+
+function CalendarList({ cal, limit = 0, emptyText, title = "Coming up", maxWidth = 400 }) {
+  const [open, setOpen] = React.useState(null);
+  const [showAll, setShowAll] = React.useState(false);
+  if (!cal || !cal.configured) return null;
+  const today = ymd();
+  const all = (cal.events || []).filter(e => (e.allDay ? (e.end || e.start) : e.start.slice(0, 10)) >= today || (e.end || "").slice(0, 10) >= today);
+  const list = limit && !showAll ? all.slice(0, limit) : all;
+  const days = [];
+  for (const e of list) {
+    const day = e.allDay && e.start < today ? today : e.start.slice(0, 10);
+    const last = days[days.length - 1];
+    if (last && last.day === day) last.items.push(e); else days.push({ day, items: [e] });
+  }
+  return (
+    <div style={{ width:"100%", maxWidth, boxSizing:"border-box", background:"#1f2023", border:"1px solid #34363a", borderRadius:14, padding:"14px 16px", marginBottom:14, textAlign:"left" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+        <CalendarDays size={16} color="#8ea3e3" />
+        <span style={{ fontSize:14, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{title}</span>
+        {cal.updated && <span style={{ marginLeft:"auto", fontSize:11, color:"#80848a" }}>from BAND</span>}
+      </div>
+      {days.length === 0 && <p style={{ margin:0, fontSize:13, color:"#80848a" }}>{emptyText || "Nothing on the calendar yet."}</p>}
+      {days.map(({ day, items }) => (
+        <div key={day} style={{ marginBottom:10 }}>
+          <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color: day === today ? "#74c464" : "#80848a", marginBottom:4 }}>{calDayLabel(day)}</div>
+          {items.map(e => {
+            const isOpen = open === e.id;
+            const more = e.desc || e.location;
+            return (
+              <div key={e.id} style={{ borderLeft:`3px solid ${e.leadersOnly ? "#e6b34a" : "#3d59a8"}`, padding:"6px 0 6px 10px", marginBottom:4 }}>
+                <button onClick={() => more && setOpen(isOpen ? null : e.id)} aria-expanded={more ? isOpen : undefined} style={{ display:"block", width:"100%", textAlign:"left", background:"none", border:"none", padding:0, cursor: more ? "pointer" : "default", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                  <div style={{ fontSize:14, fontWeight:600, color:"#f2f1ee", lineHeight:1.3 }}>
+                    {e.title}
+                    {e.leadersOnly && <span style={{ marginLeft:6, fontSize:10, fontWeight:700, color:"#e6b34a", border:"1px solid #e6b34a66", borderRadius:6, padding:"1px 5px", verticalAlign:"middle" }}>LEADERS</span>}
+                  </div>
+                  <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>{calTime(e)}{e.location ? ` · ${e.location}` : ""}</div>
+                </button>
+                {isOpen && e.desc && <div style={{ fontSize:13, color:"#d9d7d2", lineHeight:1.5, marginTop:6, whiteSpace:"pre-wrap" }}>{linkify(e.desc)}</div>}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      {limit > 0 && all.length > limit && (
+        <button onClick={() => setShowAll(v => !v)} style={{ background:"none", border:"none", color:"#74c464", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, fontFamily:"'Inter', system-ui, sans-serif" }}>
+          {showAll ? "Show less" : `See all ${all.length} events →`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CalendarSetup() {
+  const [feeds, setFeeds] = React.useState(null);
+  const [msg, setMsg] = React.useState("");
+  const [tests, setTests] = React.useState({});
+  const [dirty, setDirty] = React.useState(false);
+  const [errors, setErrors] = React.useState([]);
+  React.useEffect(() => {
+    fetch("/api/calendar?action=feeds").then(r => r.ok ? r.json() : []).then(l => setFeeds(Array.isArray(l) ? l : [])).catch(() => setFeeds([]));
+    fetch("/api/calendar").then(r => r.ok ? r.json() : null).then(d => d && setErrors(d.errors || [])).catch(() => {});
+  }, []);
+  function setF(id, k, v) { setFeeds(fs => fs.map(f => f.id === id ? { ...f, [k]: v } : f)); setDirty(true); setMsg(""); }
+  async function test(f) {
+    setTests(t => ({ ...t, [f.id]: { busy: true } }));
+    try {
+      const r = await fetch("/api/calendar", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"test", url: f.url }) });
+      const d = await r.json();
+      setTests(t => ({ ...t, [f.id]: r.ok ? { ok: true, text: d.count ? `Found ${d.count} upcoming event${d.count === 1 ? "" : "s"}. Next: ${d.next.map(n => n.title).join(", ")}` : "The link works, but there are no upcoming events on it yet." } : { ok: false, text: d.error || "That link didn’t work." } }));
+    } catch (_e) { setTests(t => ({ ...t, [f.id]: { ok: false, text: "Couldn’t reach that link." } })); }
+  }
+  async function save() {
+    setMsg("Saving…");
+    try {
+      const r = await fetch("/api/calendar", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"save", feeds }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error();
+      await fetch("/api/calendar", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"refresh" }) });
+      setFeeds(d.feeds); setDirty(false); setMsg("Saved. The calendar is updated."); setErrors([]);
+      window.dispatchEvent(new Event("lp-calendar-updated"));
+    } catch (_e) { setMsg("Couldn’t save. Check each link."); }
+  }
+  async function refresh() {
+    setMsg("Checking BAND…");
+    try {
+      const r = await fetch("/api/calendar", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"refresh" }) });
+      const d = await r.json();
+      setMsg(d.counts.map(c => c.error ? `${c.cal}: ${c.error}` : `${c.cal}: ${c.count} upcoming`).join(" · ") || "No calendars yet.");
+      window.dispatchEvent(new Event("lp-calendar-updated"));
+    } catch (_e) { setMsg("Couldn’t refresh right now."); }
+  }
+  if (!feeds) return <div style={S.importWrap}><p style={S.reportEmpty}>Loading…</p></div>;
+  const field = { ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:13.5 };
+  const lbl = { fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, margin:"0 0 4px", display:"block" };
+  return (
+    <div style={S.importWrap}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><CalendarDays size={16} color="#8ea3e3" /><p style={{ ...S.reportTitle, margin:0, color:"#8ea3e3" }}>Calendar from BAND</p></div>
+      <p style={{ margin:"0 0 10px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>Events from your BAND calendar show in Let’s Pray and update on their own (about every 30 minutes). Keep using BAND to add and change events.</p>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 14px", marginBottom:14, fontSize:13, color:C.cream, lineHeight:1.55 }}>
+        <div style={{ fontWeight:700, marginBottom:4 }}>Get your BAND calendar link</div>
+        <ol style={{ margin:0, paddingLeft:18 }}>
+          <li>Open your IMPACT Band and go to the <b>Calendar</b> tab.</li>
+          <li>Tap <b>Manage Events</b> (on a computer at band.us: Band settings), then <b>Export Band Calendars</b>.</li>
+          <li>Copy the link and paste it below.</li>
+        </ol>
+        <div style={{ color:C.muted, fontSize:12, marginTop:6 }}>Treat the link like a password: anyone with it can see the calendar. Let’s Pray keeps it on the server and never shows it to leaders, students or parents.</div>
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {feeds.map(f => (
+          <div key={f.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+            <div><label style={lbl}>Name</label><input value={f.name} onChange={e => setF(f.id, "name", e.target.value)} placeholder="e.g. IMPACT Students" style={field} /></div>
+            <div><label style={lbl}>BAND calendar link</label><input value={f.url} onChange={e => setF(f.id, "url", e.target.value)} placeholder="Paste the Export Band Calendars link" style={field} autoComplete="off" spellCheck={false} /></div>
+            <div>
+              <label style={lbl}>Who sees these events</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {[["everyone", "Everyone (leaders, students, parents)"], ["leaders", "Leaders only"]].map(([v, l]) => (
+                  <button key={v} onClick={() => setF(f.id, "audience", v)} aria-pressed={f.audience === v} style={{ flex:1, padding:"8px 6px", borderRadius:8, border:`1px solid ${f.audience === v ? C.accent : C.border}`, background: f.audience === v ? C.accentBg : "none", color: f.audience === v ? C.cream : C.muted, fontSize:12.5, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+              <button onClick={() => test(f)} disabled={!f.url.trim()} style={{ ...S.reqAddBtn, opacity: f.url.trim() ? 1 : 0.5 }}>Test link</button>
+              <button onClick={() => { setFeeds(fs => fs.filter(x => x.id !== f.id)); setDirty(true); }} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", marginLeft:"auto" }}>Remove</button>
+            </div>
+            {tests[f.id] && !tests[f.id].busy && <div style={{ fontSize:12.5, color: tests[f.id].ok ? C.accentLight : "#e07a5f", lineHeight:1.45 }}>{tests[f.id].text}</div>}
+            {tests[f.id] && tests[f.id].busy && <div style={{ fontSize:12.5, color:C.muted }}>Checking…</div>}
+            {errors.filter(e => e.cal === f.name).map((e, i) => <div key={i} style={{ fontSize:12.5, color:"#e07a5f" }}>Last check: {e.error}</div>)}
+          </div>
+        ))}
+      </div>
+      {feeds.length < 6 && (
+        <button onClick={() => { setFeeds(fs => [...fs, { id: genId(), name: fs.length ? "" : "IMPACT Students", url: "", audience: "everyone" }]); setDirty(true); }} style={{ ...S.addReqTrigger, marginTop:12, alignSelf:"stretch", justifyContent:"center", padding:"10px 12px", fontSize:13 }}>
+          <Plus size={14} style={{ marginRight:5 }} /> {feeds.length ? "Add another BAND calendar" : "Add your BAND calendar"}
+        </button>
+      )}
+      <p style={{ margin:"10px 0 0", fontSize:12, color:C.muted, lineHeight:1.5 }}>Have a separate leaders Band? Add its calendar too and set it to “Leaders only.”</p>
+      <div style={{ position:"sticky", bottom:0, background:C.bg, padding:"12px 0", marginTop:12, display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${C.border}`, flexWrap:"wrap" }}>
+        <button onClick={save} disabled={!dirty} style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.5 }}>Save calendar</button>
+        {!dirty && feeds.length > 0 && <button onClick={refresh} style={S.cancelBtn}>Refresh now</button>}
+        <span style={{ fontSize:12, color: /Couldn|:.*(didn|answered)/.test(msg) ? "#e07a5f" : dirty ? C.orange : C.muted, lineHeight:1.4 }}>{msg || (dirty ? "Unsaved changes" : "")}</span>
       </div>
     </div>
   );
@@ -2260,6 +2515,7 @@ export function ParentPage() {
   const [info, setInfo] = React.useState(null);
   const [series] = useSeries(info && info.role);
   const [events] = useEvents(info && info.role);
+  const calendar = useCalendar(info && info.role);
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -2357,6 +2613,7 @@ export function ParentPage() {
       {header}
       <SeriesCard series={series} mode="parent" />
       <EventCards events={events} mode="parent" />
+      <CalendarList cal={calendar} limit={4} />
       <div style={card}>
         <p style={{ margin:"4px 0 0", fontSize:12, color:"#80848a", textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:700 }}>Share a prayer request</p>
         <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
@@ -3004,6 +3261,7 @@ function AppMain({ settings, role, onStatus }) {
   }, []);
   const [seriesPane, setSeriesPane] = useState("series");
   const [events] = useEvents();
+  const calendar = useCalendar(role);
   function prayThroughEvent(id) { setFilter(`ev:${id}`); setCardIdx(0); window.scrollTo(0, 0); }
 
   // Prayer walls for leaders: student posts from the server, family requests from the roster
@@ -3679,7 +3937,7 @@ function AppMain({ settings, role, onStatus }) {
 
       {/* Tabs */}
       <nav style={S.tabs}>
-        {[["pray","Pray"],["wall","Wall"],["week","Week"],["roster","Roster"]].map(([v, label]) => (
+        {[["pray","Pray"],["wall","Wall"],...(calendar && calendar.configured ? [["calendar","Calendar"]] : []),["week","Week"],["roster","Roster"]].map(([v, label]) => (
           <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
             {label}
             {v === "wall" && wallNew > 0 && view !== "wall" && <span style={S.tabBadge}>{wallNew}</span>}
@@ -4113,6 +4371,13 @@ function AppMain({ settings, role, onStatus }) {
       )}
 
       {/* ─── WEEK SUMMARY ─── */}
+      {view === "calendar" && (
+        <div style={S.importWrap}>
+          <CalendarList cal={calendar} title="Calendar" maxWidth="none" emptyText="Nothing coming up on the BAND calendar." />
+          <p style={{ fontSize:12, color:C.muted, lineHeight:1.5, margin:"0 2px" }}>Events come from BAND and update about every 30 minutes. Tap an event for details.</p>
+        </div>
+      )}
+
       {view === "week" && (
         <div style={S.weekWrap}>
           <h2 style={S.weekTitle}>This Week</h2>
@@ -4566,11 +4831,11 @@ function AppMain({ settings, role, onStatus }) {
       {view === "series" && adminAuthed && (
         <>
           <div style={{ display:"flex", gap:4, margin:"14px 20px 0", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:4 }}>
-            {[["series", "Series"], ["note", "Leader note"], ["events", "Events"]].map(([v, l]) => (
+            {[["series", "Series"], ["note", "Leader note"], ["events", "Events"], ["calendar", "Calendar"]].map(([v, l]) => (
               <button key={v} onClick={() => setSeriesPane(v)} style={{ flex:1, padding:"8px 0", borderRadius:9, border:"none", background: seriesPane === v ? C.accent : "none", color: seriesPane === v ? "#101112" : C.muted, fontWeight: seriesPane === v ? 700 : 500, fontSize:13, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
             ))}
           </div>
-          {seriesPane === "series" ? <SeriesEditor /> : seriesPane === "note" ? <DevotionalEditor /> : <EventsEditor people={people} smallGroups={smallGroups} />}
+          {seriesPane === "series" ? <SeriesEditor /> : seriesPane === "note" ? <DevotionalEditor /> : seriesPane === "calendar" ? <CalendarSetup /> : <EventsEditor people={people} smallGroups={smallGroups} />}
         </>
       )}
 

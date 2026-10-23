@@ -32,7 +32,8 @@ async function buildMessage(kv) {
     const series = JSON.parse((await kv.get("series")) || "null");
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
     const week = series && (series.weeks || []).filter(w => w.date <= today).pop();
-    if (week && week.verseRef) verse = ` This week: ${week.verseRef}.`;
+    if (week && week.memoryRef) verse = ` Memory verse: ${week.memoryRef}.`;
+    else if (week && week.verseRef) verse = ` This week: ${week.verseRef}.`;
   } catch (_e) {}
   return { title: settings.name || "Let’s Pray", body: body + verse, url: "/" };
 }

@@ -14,6 +14,7 @@ function requiredRole(path, url, method) {
     if (key === "smallgroups" && method !== "GET") return "admin";
     return "team"; // people: view + mark prayed (deletes are checked again in data.js)
   }
+  if (path === "/api/calendar") return method === "GET" && !url.searchParams.get("action") ? "submit" : "admin"; // BAND calendar: everyone sees it; admin sets it up
   if (path === "/api/art") return method === "GET" ? "submit" : "admin"; // series artwork
   if (path === "/api/photo") return method === "DELETE" ? "admin" : "team"; // leaders can add/change photos; only admins remove
   if (path === "/api/submit") return method === "GET" ? "public" : "submit"; // students and parents send; details checked in submit.js

@@ -49,6 +49,8 @@ export async function onRequest(context) {
               title: clip(w.title, 120),
               verseRef: clip(w.verseRef, 80),
               verseText: clip(w.verseText, 1200),
+              memoryRef: clip(w.memoryRef, 80),           // memory verse for the week
+              memoryText: clip(w.memoryText, 800),
               prayerPrompt: clip(w.prayerPrompt, 600),
               parentPrompt: clip(w.parentPrompt, 2000),   // ASK: questions, one per line
               parentThink: clip(w.parentThink, 3000),     // THINK: the big idea for parents
