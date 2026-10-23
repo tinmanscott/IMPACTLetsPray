@@ -38,7 +38,8 @@ export async function onRequest(context) {
     const time = TIME_RE.test(body.time || "") ? body.time : "09:00";
     const tz = typeof body.tz === "string" ? body.tz.slice(0, 64) : "America/New_York";
     const id = await subscriptionId(sub.endpoint);
-    if (role === "student") {
+    if (role !== "team" && role !== "admin") {
+      // Students (with or without the code): only "someone prayed for you", never leader reminders
       await kv.put(`push:sub:${id}`, JSON.stringify({
         subscription: { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
         kind: "student",
@@ -66,7 +67,7 @@ export async function onRequest(context) {
     context.waitUntil(notifyOnce(kv, person.notifyId, `person:${personId}`, {
       title: "You were prayed for today 🙏",
       body: "One of your IMPACT leaders just prayed for you.",
-      url: "/submit",
+      url: "/students#wall",
     }));
     return json({ ok: true, sent: true });
   }

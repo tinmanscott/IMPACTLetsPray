@@ -14,7 +14,7 @@ export async function onRequest(context) {
   if (request.method === "GET") {
     const { role, settings } = await getSession(request, env);
     const pub = publicSettings(settings);
-    return json({ open: !!(pub && pub.studentCodeSet), parentOpen: !!(pub && pub.parentCodeSet), name: pub ? pub.name : "", sub: pub ? pub.sub : "", configured: !!pub, role });
+    return json({ open: !!(pub && pub.configured), studentCodeSet: !!(pub && pub.studentCodeSet), parentOpen: !!(pub && pub.parentCodeSet), name: pub ? pub.name : "", sub: pub ? pub.sub : "", configured: !!pub, role });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
@@ -26,7 +26,18 @@ export async function onRequest(context) {
   const kind = KINDS.includes(body.kind) ? body.kind : "request";
   // Parents can only send family requests; students can't send parent ones
   if (role === "parent" && kind !== "parent") return json({ error: "Please use the parent page." }, 403);
-  if (role === "student" && kind === "parent") return json({ error: "Please use the student page." }, 403);
+  if (kind === "parent" && role !== "parent" && role !== "admin") return json({ error: "Please use the parent page." }, 403);
+  if (body.website) return json({ ok: true, id: "x" }); // hidden field only bots fill in
+
+  // The student page is open without a code, so slow down floods from one device
+  if (role !== "team" && role !== "admin") {
+    const ip = request.headers.get("CF-Connecting-IP") || "local";
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lp-rl:" + ip))).slice(0, 8)).map(b => b.toString(16).padStart(2, "0")).join("");
+    const key = `rl:submit:${hash}:${Math.floor(Date.now() / 36e5)}`;
+    const n = Number(await env.INTERCEDE_KV.get(key)) || 0;
+    if (n >= 10) return json({ error: "That’s a lot at once! Please wait a bit and try again." }, 429);
+    await env.INTERCEDE_KV.put(key, String(n + 1), { expirationTtl: 7200 });
+  }
   if (name.length < 2) return json({ error: "Please enter your name." }, 400);
 
   // Optional roster details, applied only when an admin approves

@@ -55,6 +55,17 @@ export async function onRequest(context) {
               parentPrompt: clip(w.parentPrompt, 2000),   // ASK: questions, one per line
               parentThink: clip(w.parentThink, 3000),     // THINK: the big idea for parents
               parentPray: clip(w.parentPray, 2000),       // PRAY: one line per thing to pray for their student
+              // Daily devos that follow the lesson: day 1 = Monday after the Sunday message … 6 = Saturday
+              devos: (Array.isArray(w.devos) ? w.devos : []).slice(0, 7).map(d => ({
+                id: clip(d.id, 40) || Math.random().toString(36).slice(2),
+                day: Math.min(6, Math.max(1, Math.round(Number(d.day) || 1))),
+                title: clip(d.title, 120),
+                ref: clip(d.ref, 80),
+                passage: clip(d.passage, 2500),
+                reflect: clip(d.reflect, 3000),
+                respond: clip(d.respond, 1000),
+                pray: clip(d.pray, 1000),
+              })).filter(d => d.title || d.ref || d.reflect).sort((a, b) => a.day - b.day),
             }))
             .sort((a, b) => a.date.localeCompare(b.date)),
         };

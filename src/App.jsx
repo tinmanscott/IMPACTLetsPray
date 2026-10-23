@@ -754,18 +754,32 @@ function SetupScreen({ onComplete }) {
   );
 }
 
-function LockScreen({ status, onSignedIn }) {
+/* Page addresses: /students, /parents, /leaders, /admin (the preview swaps pages without leaving) */
+function currentPath() {
+  if (typeof window !== "undefined" && window.__LP_PATH) return window.__LP_PATH;
+  if (typeof location === "undefined") return "/";
+  return location.pathname.replace(/\/+$/, "").toLowerCase() || "/";
+}
+function navTo(path) {
+  if (typeof window !== "undefined" && window.__lpDemoNav) return window.__lpDemoNav(path);
+  location.href = path;
+}
+const linkBtn = { background:"none", border:"none", color:"#74c464", cursor:"pointer", padding:0, font:"inherit", textDecoration:"underline" };
+
+function LockScreen({ status, onSignedIn, mode = "leader" }) {
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const isAdmin = mode === "admin" || !status.teamCodeSet;
 
   async function submit() {
     if (!code.trim()) return;
     setBusy(true); setErr("");
     try {
       const res = await apiAuth("login", { code: code.trim() });
-      if (res.role === "parent" && !window.__LP_DEMO) { location.href = "/parents"; return; }
-      if (res.role === "student" && !window.__LP_DEMO) { location.href = "/submit"; return; }
+      if (res.role === "parent") { navTo("/parents"); return; }
+      if (res.role === "student") { navTo("/students"); return; }
+      if (mode === "admin" && res.role !== "admin") { onSignedIn(res); navTo("/leaders"); return; }
       onSignedIn(res);
     } catch (e) { setErr(e.message); setBusy(false); setCode(""); }
   }
@@ -774,24 +788,95 @@ function LockScreen({ status, onSignedIn }) {
     <div style={authWrap}>
       <img src="/logo.png" alt={status.name || ""} style={{ width: 220, height: "auto", marginBottom: 14 }} />
       <AppWordmark />
-      <p style={{ fontSize:14, color:"#80848a", margin:"14px 0 24px", textAlign:"center", maxWidth:300, lineHeight:1.5 }}>
-        {status.teamCodeSet ? "Enter your team code to start praying." : "Your admin needs to finish setup. Admins: sign in with your admin password."}
+      <p style={{ fontSize:12, color:"#80848a", margin:"6px 0 0", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>{mode === "admin" ? "Admin" : "Leaders"}</p>
+      <p style={{ fontSize:14, color:"#80848a", margin:"12px 0 24px", textAlign:"center", maxWidth:300, lineHeight:1.5 }}>
+        {mode === "admin" ? "Sign in with the admin password to manage the roster, Inbox, lessons and settings." : status.teamCodeSet ? "Enter your team code to start praying." : "Your admin needs to finish setup. Admins: sign in with your admin password."}
       </p>
       <div style={{ width:"100%", maxWidth:320, display:"flex", flexDirection:"column", gap:12 }}>
         <input autoFocus type="password" value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()}
-          placeholder={status.teamCodeSet ? "Team code" : "Admin password"} style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
+          aria-label={isAdmin ? "Admin password" : "Team code"} placeholder={isAdmin ? "Admin password" : "Team code"} style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
         {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0, textAlign:"center" }}>{err}</p>}
         <button onClick={submit} disabled={busy} style={{ ...authBtn, opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Lock size={15} /> {busy ? "Checking…" : "Sign In"}</button>
       </div>
-      <p style={{ fontSize:12, color:"#5c6066", marginTop:28, textAlign:"center", maxWidth:300, lineHeight:1.5 }}>Ask your student ministry leader if you don’t have the code.</p>
-      {(status.studentCodeSet || status.parentCodeSet) && (
-        <p style={{ fontSize:12.5, color:"#80848a", marginTop:6, textAlign:"center", maxWidth:320, lineHeight:1.6 }}>
-          {status.studentCodeSet && <>Students: <a href="/submit" style={{ color:"#74c464" }}>share a prayer request</a><br /></>}
-          {status.parentCodeSet && <>Parents: <a href="/parents" style={{ color:"#74c464" }}>share a prayer request for your family</a></>}
-        </p>
-      )}
+      <p style={{ fontSize:12.5, color:"#80848a", marginTop:28, textAlign:"center", maxWidth:320, lineHeight:1.7 }}>
+        {mode === "admin" ? <>Leader? <button onClick={() => navTo("/leaders")} style={linkBtn}>Sign in with the team code</button></> : <>Students: <button onClick={() => navTo("/students")} style={linkBtn}>go to the student page</button><br />Parents: <button onClick={() => navTo("/parents")} style={linkBtn}>go to the parent page</button></>}
+      </p>
     </div>
   );
+}
+
+/* Home page for anyone not signed in as a leader */
+function HomeChooser({ status }) {
+  const tile = (path, title, sub, color) => (
+    <button onClick={() => navTo(path)} style={{ width:"100%", textAlign:"left", background:"#1f2023", border:`1px solid ${color}66`, borderLeft:`4px solid ${color}`, borderRadius:12, padding:"14px 16px", cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", display:"flex", alignItems:"center", gap:12 }}>
+      <span style={{ flex:1 }}>
+        <span style={{ display:"block", fontSize:16, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{title}</span>
+        <span style={{ display:"block", fontSize:13, color:"#a9acb1", marginTop:3, lineHeight:1.4 }}>{sub}</span>
+      </span>
+      <ChevronRight size={18} color="#80848a" />
+    </button>
+  );
+  return (
+    <div style={authWrap}>
+      <img src="/logo.png" alt={status.name || ""} style={{ width: 220, height: "auto", marginBottom: 14 }} />
+      <AppWordmark />
+      <div style={{ width:"100%", maxWidth:360, display:"flex", flexDirection:"column", gap:10, marginTop:24 }}>
+        {tile("/students", "Students", "Share a prayer request, this week’s lesson, and the Prayer Wall", "#4cad3b")}
+        {tile("/parents", "Parents", "This week’s lesson to talk about at home, and family prayer requests", "#b49ad0")}
+        {tile("/leaders", "Leaders", "Pray for our students by name", "#3d59a8")}
+      </div>
+      <button onClick={() => navTo("/admin")} style={{ background:"none", border:"none", color:"#5c6066", fontSize:12, cursor:"pointer", marginTop:28, fontFamily:"'Inter', system-ui, sans-serif" }}>Admin sign-in</button>
+    </div>
+  );
+}
+
+/* Asks for the student code once, for the Prayer Wall and Calendar on the open student page */
+function CodeUnlock({ what, onUnlocked, codeSet = true, codeName = "student code" }) {
+  const [code, setCode] = React.useState("");
+  const [err, setErr] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  async function go() {
+    if (!code.trim()) return;
+    setBusy(true); setErr("");
+    try { await apiAuth("login", { code: code.trim() }); setCode(""); onUnlocked(); }
+    catch (e) { setErr(e.message); setCode(""); }
+    setBusy(false);
+  }
+  return (
+    <div style={{ width:"100%", maxWidth:340, display:"flex", flexDirection:"column", gap:12, alignItems:"center", textAlign:"center", padding:"8px 0 24px" }}>
+      <Lock size={26} color="#80848a" />
+      {codeSet ? (
+        <>
+          <p style={{ fontSize:14.5, color:"#d9d7d2", margin:0, lineHeight:1.5 }}>The {what} is just for our students. Enter the {codeName} your leaders gave you. You only need to do this once on this phone.</p>
+          <input value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === "Enter" && go()} aria-label={codeName} placeholder={codeName.charAt(0).toUpperCase() + codeName.slice(1)} style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
+          {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0 }}>{err}</p>}
+          <button onClick={go} disabled={busy} style={{ ...authBtn, width:"100%", opacity: busy ? 0.7 : 1 }}>{busy ? "Checking…" : "Unlock"}</button>
+        </>
+      ) : <p style={{ fontSize:14, color:"#80848a", margin:0, lineHeight:1.5 }}>The {what} isn’t open yet. Ask your leaders!</p>}
+    </div>
+  );
+}
+
+/* Tab bar for the student and parent pages */
+function PageTabs({ tabs, tab, setTab }) {
+  return (
+    <div role="tablist" style={{ display:"flex", width:"100%", maxWidth:400, background:"#1f2023", border:"1px solid #34363a", borderRadius:12, padding:4, gap:3, marginBottom:18, boxSizing:"border-box" }}>
+      {tabs.map(([v, l]) => (
+        <button key={v} role="tab" aria-selected={tab === v} onClick={() => setTab(v)} style={{ flex:1, minWidth:0, padding:"10px 0", borderRadius:9, border:"none", background: tab === v ? "#4cad3b" : "none", color: tab === v ? "#101112" : "#80848a", fontWeight: tab === v ? 700 : 500, fontSize: tabs.length > 4 ? 13 : 13.5, cursor:"pointer", whiteSpace:"nowrap", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
+      ))}
+    </div>
+  );
+}
+// Keeps the open tab in the address (e.g. /students#wall) so links and refreshes land on it
+function useHashTab(allowed, fallback) {
+  const read = () => { const h = (typeof location !== "undefined" ? location.hash : "").replace("#", ""); return allowed.includes(h) ? h : fallback; };
+  const [tab, setTabState] = React.useState(read);
+  const setTab = React.useCallback(v => {
+    setTabState(v);
+    try { if (!window.__LP_DEMO) history.replaceState(null, "", `${location.pathname}#${v}`); } catch (_e) {}
+    window.scrollTo(0, 0);
+  }, []);
+  return [tab, setTab];
 }
 
 function ReminderCard() {
@@ -911,15 +996,15 @@ function SettingsCard({ settings, onStatus }) {
       <div>
         {label(settings.studentCodeSet ? "Change student code" : "Student code (optional)")}
         <p style={{ margin:"0 0 8px", fontSize:12, color:C.muted, lineHeight:1.5 }}>
-          Students use this at <b style={{ color:C.cream }}>{location.origin}/submit</b> to send prayer requests and CAUSE Circle names. You approve them in the Inbox. Students can’t see the roster.
+          Anyone can open <b style={{ color:C.cream }}>{location.origin}/students</b> to share a prayer request, CAUSE Circle names or a Gospel story, and to read the weekly lesson. You approve everything in the Inbox. The student code unlocks the Prayer Wall and Calendar on that page (students enter it once per phone). Students never see the roster.
         </p>
         <div style={row}>
           <input value={student} onChange={e => setStudent(e.target.value)} placeholder="Student code (4+ characters)" style={inp} autoCapitalize="none" autoCorrect="off" />
           <button disabled={busy === "student" || student.trim().length < 4} onClick={() => save("student", { studentCode: student.trim() }, () => setStudent(""))} style={{ ...S.reqAddBtn, opacity: student.trim().length < 4 ? 0.5 : 1 }}>Save</button>
         </div>
         <div style={{ display:"flex", gap:12, marginTop:6 }}>
-          <button onClick={() => { try { navigator.clipboard.writeText(`${location.origin}/submit`); setMsg({ student: { ok: true, text: "Link copied." } }); } catch (_e) {} }} style={{ background:"none", border:"none", color:C.accent, fontSize:12, cursor:"pointer", padding:0 }}>Copy student link</button>
-          {settings.studentCodeSet && <button onClick={() => save("student", { studentCode: null })} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", padding:0 }}>Close the student page</button>}
+          <button onClick={() => { try { navigator.clipboard.writeText(`${location.origin}/students`); setMsg({ student: { ok: true, text: "Link copied." } }); } catch (_e) {} }} style={{ background:"none", border:"none", color:C.accent, fontSize:12, cursor:"pointer", padding:0 }}>Copy student link</button>
+          {settings.studentCodeSet && <button onClick={() => save("student", { studentCode: null })} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", padding:0 }}>Turn off the student code (locks the wall and calendar)</button>}
         </div>
         {note("student")}
       </div>
@@ -927,7 +1012,7 @@ function SettingsCard({ settings, onStatus }) {
       <div>
         {label(settings.parentCodeSet ? "Change parent code" : "Parent code (optional)")}
         <p style={{ margin:"0 0 8px", fontSize:12, color:C.muted, lineHeight:1.5 }}>
-          Parents use this at <b style={{ color:C.cream }}>{location.origin}/parents</b> to share family prayer requests. You approve them in the Inbox. Parents can’t see the roster or the student Prayer Wall.
+          Parents use this at <b style={{ color:C.cream }}>{location.origin}/parents</b> for the weekly lesson, the calendar, the student Prayer Wall, and to share family prayer requests (you approve them in the Inbox). Parents can’t see the roster.
         </p>
         <div style={row}>
           <input value={parentCode} onChange={e => setParentCode(e.target.value)} placeholder="Parent code (4+ characters)" style={inp} autoCapitalize="none" autoCorrect="off" />
@@ -1001,7 +1086,7 @@ function AppWordmark({ small }) {
   );
 }
 
-/* ── Student page (/submit) ── */
+/* ── Student page (/students; /submit still works) ── */
 const STUDENT_NAME_KEY = "lp-student-name";
 const STUDENT_GRADE_KEY = "lp-student-grade";
 const STUDENT_BDAY_KEY = "lp-student-bday";
@@ -1024,7 +1109,8 @@ export function StudentPage() {
   const [bMonth, setBMonth] = React.useState(() => (lsGet(STUDENT_BDAY_KEY) || "").split("-")[0] || "");
   const [bDay, setBDay] = React.useState(() => (lsGet(STUDENT_BDAY_KEY) || "").split("-")[1] || "");
   const [done, setDone] = React.useState(false);
-  const [tab, setTab] = React.useState("share");
+  const [tab, setTab] = useHashTab(["share", "lesson", "devos", "calendar", "wall"], "share");
+  const [hp, setHp] = React.useState(""); // hidden field; only bots fill it in
   const [share, setShare] = React.useState(false);
   const [anonymous, setAnonymous] = React.useState(false);
   const [sharedLast, setSharedLast] = React.useState(false);
@@ -1060,14 +1146,6 @@ export function StudentPage() {
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
-  async function signIn() {
-    if (!code.trim()) return;
-    setBusy(true); setErr("");
-    try { await apiAuth("login", { code: code.trim() }); load(); setCode(""); }
-    catch (e) { setErr(e.message); setCode(""); }
-    setBusy(false);
-  }
-
   async function submit() {
     setErr("");
     const list = friends.map(f => f.trim()).filter(Boolean);
@@ -1081,9 +1159,8 @@ export function StudentPage() {
     if (kind === "info" && !grade && !birthday && !photoData) return setErr("Add your grade, birthday, or a photo.");
     setBusy(true);
     try {
-      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: (kind === "request" || kind === "praise") && share, anonymous: (kind === "request" || kind === "praise") && share && anonymous, notifyId: notifyId || undefined, photo: photoData || undefined, count: kind === "gospel" ? gCount : undefined, friend: kind === "gospel" ? gFriend.trim() : undefined, outcome: kind === "gospel" ? (gOutcome || undefined) : undefined }) });
+      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ website: hp || undefined, name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: (kind === "request" || kind === "praise") && share, anonymous: (kind === "request" || kind === "praise") && share && anonymous, notifyId: notifyId || undefined, photo: photoData || undefined, count: kind === "gospel" ? gCount : undefined, friend: kind === "gospel" ? gFriend.trim() : undefined, outcome: kind === "gospel" ? (gOutcome || undefined) : undefined }) });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 401) { load(); throw new Error("Please enter the student code again."); }
       if (!res.ok) throw new Error(data.error || "That didn’t send. Try again.");
       lsSet(STUDENT_NAME_KEY, name.trim());
       lsSet(STUDENT_GRADE_KEY, grade || null);
@@ -1100,26 +1177,15 @@ export function StudentPage() {
     <>
       <img src="/logo.png" alt={info?.name || ""} style={{ width: 210, height: "auto", marginBottom: 10 }} />
       <AppWordmark small />
-      <p style={{ fontSize:12, color:"#80848a", margin:"0 0 24px", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>Share with your leaders</p>
+      <p style={{ fontSize:12, color:"#80848a", margin:"0 0 24px", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>For students</p>
     </>
   );
 
   if (!info) return <LoadingScreen />;
-  if (info.error || !info.configured || !info.open) return (
+  if (info.error || !info.configured) return (
     <div style={authWrap}>{header}<p style={{ color:"#80848a", fontSize:14, textAlign:"center", maxWidth:300, lineHeight:1.5 }}>This page isn’t open yet. Check back soon!</p></div>
   );
-
-  if (!info.role) return (
-    <div style={authWrap}>
-      {header}
-      <div style={{ ...card, maxWidth:320 }}>
-        <p style={{ fontSize:14, color:"#80848a", margin:"0 0 4px", textAlign:"center", lineHeight:1.5 }}>Enter the student code your leaders gave you.</p>
-        <input autoFocus value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === "Enter" && signIn()} placeholder="Student code" style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
-        {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0, textAlign:"center" }}>{err}</p>}
-        <button onClick={signIn} disabled={busy} style={{ ...authBtn, opacity: busy ? 0.7 : 1 }}>{busy ? "Checking…" : "Continue"}</button>
-      </div>
-    </div>
-  );
+  const unlocked = !!info.role; // the student code (or a leader/parent sign-in) opens the Prayer Wall and Calendar
 
   if (done) return (
     <div style={authWrap}>
@@ -1137,41 +1203,30 @@ export function StudentPage() {
     </div>
   );
 
-  const tabsRow = (
-    <div style={{ display:"flex", width:"100%", maxWidth:400, background:"#1f2023", border:"1px solid #34363a", borderRadius:12, padding:4, gap:4, marginBottom:18, boxSizing:"border-box" }}>
-      {[["share","Share"],["wall","Prayer Wall"],...(calendar && calendar.configured ? [["calendar","Calendar"]] : [])].map(([v, l]) => (
-        <button key={v} onClick={() => setTab(v)} style={{ flex:1, padding:"10px 0", borderRadius:9, border:"none", background: tab === v ? "#4cad3b" : "none", color: tab === v ? "#101112" : "#80848a", fontWeight: tab === v ? 700 : 500, fontSize:14, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
-      ))}
-    </div>
-  );
+  const tabsRow = <PageTabs tab={tab} setTab={setTab} tabs={[["share", "Share"], ["lesson", "Lesson"], ["devos", "Devos"], ["calendar", "Calendar"], ["wall", "Wall"]]} />;
+  const page = children => <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>{header}{tabsRow}{children}</div>;
 
-  if (tab === "calendar") return (
-    <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
-      {header}
-      {tabsRow}
-      <EventCards events={events} mode="student" />
-      <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet. Check back soon!" />
-    </div>
-  );
+  if (tab === "lesson") return page(<LessonsView series={series} mode="student" />);
+  if (tab === "devos") return page(<DevosView series={series} mode="student" />);
 
-  if (tab === "wall") return (
-    <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
-      {header}
-      {tabsRow}
-      <SeriesCard series={series} mode="student" />
+  if (tab === "calendar") return page(unlocked ? (
+    <>
       <EventCards events={events} mode="student" />
-      <PrayerWall />
-    </div>
-  );
+      {calendar && calendar.configured
+        ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet. Check back soon!" />
+        : <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"20px 0" }}>The calendar is coming soon.</p>}
+    </>
+  ) : <CodeUnlock what="calendar" codeSet={info.studentCodeSet} onUnlocked={load} />);
+
+  if (tab === "wall") return page(unlocked ? <PrayerWall /> : <CodeUnlock what="Prayer Wall" codeSet={info.studentCodeSet} onUnlocked={load} />);
 
   const chip = on => ({ flex:1, padding:"11px 2px", borderRadius:10, border:`1px solid ${on ? "#4cad3b" : "#34363a"}`, background: on ? "#18241a" : "#1f2023", color: on ? "#f2f1ee" : "#80848a", fontSize:14, fontWeight: on ? 700 : 500, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
   return (
     <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
       {header}
       {tabsRow}
-      <SeriesCard series={series} mode="student" />
-      <EventCards events={events} mode="student" />
       <div style={card}>
+        <input value={hp} onChange={e => setHp(e.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true" name="website" style={{ position:"absolute", left:-9999, width:1, height:1, opacity:0 }} />
         <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
         <div style={{ display:"flex", gap:8 }}>
           <div style={{ flex:"0 0 34%" }}>
@@ -1405,8 +1460,8 @@ function MemoryVerse({ week, mode, sameAsVerse }) {
   );
 }
 
-function SeriesCard({ series, mode = "leader" }) {
-  const cur = seriesWeek(series);
+function SeriesCard({ series, mode = "leader", pick, full = false, hideArt = false }) {
+  const cur = pick || seriesWeek(series);
   if (!cur) return null;
   const { week, number, total, upcoming } = cur;
   const isParent = mode === "parent";
@@ -1434,11 +1489,11 @@ function SeriesCard({ series, mode = "leader" }) {
   );
   return (
     <div style={wrap}>
-      {art && <img src={art} alt={series.name || "Series artwork"} style={{ width:"100%", height: isParent ? 150 : 110, objectFit:"cover", display:"block" }} onError={e => { e.currentTarget.style.display = "none"; }} />}
+      {art && !hideArt && <img src={art} alt={series.name || "Series artwork"} style={{ width:"100%", height: isParent ? 150 : 110, objectFit:"cover", display:"block" }} onError={e => { e.currentTarget.style.display = "none"; }} />}
       <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap: isParent ? 14 : 8 }}>
         <div>
           <div style={eyebrow}>
-            {isParent ? `${series.name ? series.name + " · " : ""}${prettyDay(week.date)} message` : `${series.name || "This week"} · ${upcoming ? `starts ${prettyDay(week.date)}` : `Week ${number} of ${total}`}`}
+            {isParent ? `${series.name ? series.name + " · " : ""}${prettyDay(week.date)} message` : `${series.name || "This week"} · ${upcoming ? `starts ${prettyDay(week.date)}` : `Week ${number} of ${total}`}${pick && !upcoming ? ` · ${prettyDay(week.date)}` : ""}`}
           </div>
           {week.title && <div style={{ fontSize:17, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", lineHeight:1.25, marginTop:4 }}>{week.title}</div>}
         </div>
@@ -1447,12 +1502,240 @@ function SeriesCard({ series, mode = "leader" }) {
         {!isParent && week.prayerPrompt && (
           <div style={{ fontSize:13.5, color:"#f2f1ee", lineHeight:1.45 }}><span style={{ color:"#e95e24", fontWeight:700 }}>Pray: </span>{week.prayerPrompt}</div>
         )}
+        {full && mode === "student" && ask.length > 0 && <div style={{ marginTop:4 }}><div style={head}>Think about it</div>{list(ask)}</div>}
+        {full && mode === "leader" && (week.parentThink || ask.length > 0 || pray.length > 0) && (
+          <div style={{ borderTop:"1px solid #34363a", marginTop:4, paddingTop:10, display:"flex", flexDirection:"column", gap:10 }}>
+            <div style={{ fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#b49ad0" }}>What parents got this week</div>
+            {week.parentThink && <div><div style={head}>Think</div><p style={{ margin:0, fontSize:13.5, color:"#d9d7d2", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{week.parentThink}</p></div>}
+            {ask.length > 0 && <div><div style={head}>Ask</div>{list(ask)}</div>}
+            {pray.length > 0 && <div><div style={head}>Pray</div>{list(pray)}</div>}
+          </div>
+        )}
         {isParent && week.parentThink && <div><div style={head}>Think</div><p style={{ margin:0, fontSize:14, color:"#d9d7d2", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{week.parentThink}</p></div>}
         {isParent && verse && !sameAsVerse && <div><div style={head}>Read</div>{verse}</div>}
         {isParent && memory && <div>{sameAsVerse && <div style={head}>Read</div>}{memory}</div>}
         {isParent && ask.length > 0 && <div><div style={head}>Ask</div><div style={{ fontSize:12.5, color:"#80848a", marginBottom:6 }}>Ask your student about this week’s message. Share personally and encourage them.</div>{list(ask)}</div>}
         {isParent && pray.length > 0 && <div><div style={head}>Pray</div><div style={{ fontSize:12.5, color:"#80848a", marginBottom:6 }}>Pray for your student this week that they would:</div>{list(pray)}</div>}
       </div>
+    </div>
+  );
+}
+
+/* ── Daily devos that follow each week's lesson ── */
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const BIBLE_VERSION = "ESV";
+const bibleLink = ref => `https://www.biblegateway.com/passage/?search=${encodeURIComponent(ref)}&version=${BIBLE_VERSION}`;
+const devoDate = (week, d) => { const x = new Date(week.date + "T12:00:00"); x.setDate(x.getDate() + d.day); return ymd(x); };
+const DEVO_KEY = (weekId, devoId) => `lp-devo-${weekId}-${devoId}`;
+
+function DevoCard({ week, devo, open, onToggle, isToday, mode }) {
+  const [done, setDone] = React.useState(() => lsGet(DEVO_KEY(week.id, devo.id)) === "1");
+  function mark() { const v = !done; setDone(v); lsSet(DEVO_KEY(week.id, devo.id), v ? "1" : "0"); }
+  const date = devoDate(week, devo);
+  const future = date > ymd();
+  const head = { fontSize:11, letterSpacing:"0.14em", textTransform:"uppercase", fontWeight:800, color:"#e95e24", marginBottom:4 };
+  return (
+    <div style={{ background: isToday ? "linear-gradient(160deg, #1d2236 0%, #1f2023 70%)" : "#1f2023", border:`1px solid ${isToday ? "#3d59a8aa" : "#34363a"}`, borderRadius:12, marginBottom:8, overflow:"hidden" }}>
+      <button onClick={onToggle} aria-expanded={open} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, background:"none", border:"none", padding:"11px 14px", cursor:"pointer", textAlign:"left", fontFamily:"'Inter', system-ui, sans-serif" }}>
+        <span aria-hidden="true" style={{ width:26, height:26, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, background: done ? "#4cad3b" : isToday ? "#3d59a8" : "#2a2c30", color: done ? "#101112" : "#f2f1ee" }}>{done ? "✓" : devo.day}</span>
+        <span style={{ flex:1, minWidth:0 }}>
+          <span style={{ display:"block", fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", fontWeight:700, color: isToday ? "#8ea3e3" : "#80848a" }}>{isToday ? "Today · " : ""}{DAY_NAMES[new Date(date + "T12:00:00").getDay()]}</span>
+          <span style={{ display:"block", fontSize:14.5, color: future && !isToday ? "#a9acb1" : "#f2f1ee", fontWeight:600, lineHeight:1.3 }}>{devo.title || devo.ref || `Day ${devo.day}`}</span>
+          {devo.title && devo.ref && <span style={{ display:"block", fontSize:12, color:"#74c464", fontWeight:600, marginTop:1 }}>{devo.ref}</span>}
+        </span>
+        <ChevronRight size={16} color="#80848a" style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s", flexShrink:0 }} />
+      </button>
+      {open && (
+        <div style={{ padding:"2px 16px 14px", display:"flex", flexDirection:"column", gap:12 }}>
+          {devo.ref && (
+            <div>
+              <div style={head}>Read</div>
+              {devo.passage && <div style={{ borderLeft:"3px solid #4cad3b", paddingLeft:10, fontSize:14, color:"#f2f1ee", lineHeight:1.55, fontStyle:"italic", whiteSpace:"pre-wrap", marginBottom:6 }}>{devo.passage}</div>}
+              <a href={bibleLink(devo.ref)} target="_blank" rel="noopener noreferrer" style={{ fontSize:13.5, color:"#74c464", fontWeight:700, textDecoration:"none" }}>{devo.passage ? `${devo.ref} · read the whole passage →` : `Read ${devo.ref} →`}</a>
+            </div>
+          )}
+          {devo.reflect && <div><div style={head}>Think</div><p style={{ margin:0, fontSize:14, color:"#d9d7d2", lineHeight:1.6, whiteSpace:"pre-wrap" }}>{devo.reflect}</p></div>}
+          {devo.respond && <div><div style={head}>{mode === "parent" ? "Talk about it" : "Respond"}</div><p style={{ margin:0, fontSize:14, color:"#f2f1ee", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{devo.respond}</p></div>}
+          {devo.pray && <div><div style={head}>Pray</div><p style={{ margin:0, fontSize:14, color:"#f2f1ee", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{devo.pray}</p></div>}
+          <button onClick={mark} aria-pressed={done} style={{ alignSelf:"flex-start", background: done ? "none" : "#4cad3b", color: done ? "#80848a" : "#101112", border: done ? "1px solid #34363a" : "none", borderRadius:9, padding:"9px 14px", fontSize:13.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{done ? "Done ✓ (undo)" : "I did today’s devo ✓"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DevosView({ series, mode = "student" }) {
+  const cur = seriesWeek(series);
+  const weeks = series && Array.isArray(series.weeks) ? series.weeks.slice().sort((a, b) => a.date.localeCompare(b.date)) : [];
+  const withDevos = weeks.filter(w => (w.devos || []).length);
+  // Show this week's devos; on Sunday before new ones start, keep last week's in view
+  const defaultWeek = (cur && (cur.week.devos || []).length ? cur.week : null) || withDevos.filter(w => w.date <= ymd()).pop() || withDevos[0] || null;
+  const [weekId, setWeekId] = React.useState(defaultWeek ? defaultWeek.id : null);
+  const week = withDevos.find(w => w.id === weekId) || defaultWeek;
+  const today = ymd();
+  const devos = week ? week.devos || [] : [];
+  const todayDevo = devos.find(d => devoDate(week, d) === today);
+  const [openId, setOpenId] = React.useState(() => todayDevo ? todayDevo.id : null);
+  const todayId = todayDevo ? todayDevo.id : null;
+  const opened = React.useRef(false);
+  React.useEffect(() => { if (todayId && !opened.current) { opened.current = true; setOpenId(todayId); } }, [todayId]); // series loads after first render
+  const maxWidth = mode === "leader" ? "none" : 400;
+  if (!week) return (
+    <div style={{ width:"100%", maxWidth, textAlign:"center", padding:"28px 0", color:"#80848a", fontSize:14, lineHeight:1.5 }}>
+      <BookOpen size={26} color="#80848a" style={{ marginBottom:8 }} /><br />This week’s devos will show up here.
+    </div>
+  );
+  const n = weeks.indexOf(week) + 1;
+  const doneCount = devos.filter(d => lsGet(DEVO_KEY(week.id, d.id)) === "1").length;
+  const intro = mode === "parent" ? "Do these with your student, or ask them what they’re reading. Each one follows Sunday’s message." : mode === "leader" ? "What students are reading this week. Do them too, and ask your group about them." : "A few minutes with God each day, following Sunday’s message.";
+  return (
+    <div style={{ width:"100%", maxWidth, display:"flex", flexDirection:"column" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, margin:"0 2px 6px" }}>
+        <span style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#8ea3e3" }}>{series.name ? `${series.name} · ` : ""}Week {n}</span>
+        {withDevos.length > 1 && (
+          <select value={week.id} onChange={e => { setWeekId(e.target.value); setOpenId(null); }} aria-label="Pick a week" style={{ marginLeft:"auto", background:"#1f2023", color:"#f2f1ee", border:"1px solid #34363a", borderRadius:8, padding:"5px 8px", fontSize:12.5, fontFamily:"'Inter', system-ui, sans-serif" }}>
+            {withDevos.filter(w => w.date <= today || w.id === week.id).map(w => <option key={w.id} value={w.id}>Week {weeks.indexOf(w) + 1}{w.title ? `: ${w.title}` : ""}</option>)}
+          </select>
+        )}
+      </div>
+      <div style={{ fontSize:17, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", margin:"0 2px 4px" }}>{week.title ? `Devos: ${week.title}` : "This week’s devos"}</div>
+      <p style={{ margin:"0 2px 12px", fontSize:13, color:"#a9acb1", lineHeight:1.5 }}>{intro}{mode !== "leader" && devos.length ? ` ${doneCount} of ${devos.length} done.` : ""}</p>
+      {devos.map(d => (
+        <DevoCard key={week.id + d.id} week={week} devo={d} mode={mode} isToday={devoDate(week, d) === today} open={openId === d.id} onToggle={() => setOpenId(openId === d.id ? null : d.id)} />
+      ))}
+    </div>
+  );
+}
+
+/* Reads devos pasted as text: "Day 1 – Title" (or "Monday: Title") headings, then Read: / Think: / Respond: / Pray: lines */
+function parseDevos(raw) {
+  const lines = String(raw || "").replace(/\r/g, "").split("\n").map(l => l.trim());
+  const out = [];
+  let cur = null, field = "reflect";
+  const DAY = /^(?:day\s*(\d)|(mon|tue|wed|thu|fri|sat)[a-z]*)\b\s*[:.\-–—]?\s*(.*)$/i;
+  const FIELDS = [[/^(read|scripture|passage)\s*:?\s*(.*)$/i, "ref"], [/^(think|reflect|reflection|devotion)\s*:?\s*(.*)$/i, "reflect"], [/^(respond|response|ask|question|apply|do this)\s*:?\s*(.*)$/i, "respond"], [/^(pray|prayer)\s*:?\s*(.*)$/i, "pray"]];
+  for (const l of lines) {
+    const d = DAY.exec(l);
+    if (d && l.length < 120) {
+      const day = d[1] ? Number(d[1]) : ["mon", "tue", "wed", "thu", "fri", "sat"].indexOf(d[2].toLowerCase()) + 1;
+      if (day >= 1 && day <= 6) { cur = { id: genId(), day, title: d[3] || "", ref: "", passage: "", reflect: "", respond: "", pray: "" }; out.push(cur); field = "reflect"; continue; }
+    }
+    if (!cur) continue;
+    const f = FIELDS.find(([re]) => re.test(l));
+    if (f) {
+      const v = f[0].exec(l)[2] || "";
+      field = f[1];
+      if (field === "ref") {
+        const m = /((?:[1-3]\s?)?[A-Z][a-z]+(?:\s(?:of\s)?[A-Z][a-z]+)?\s\d+(?::\d+(?:\s*[-–]\s*\d+)?)?)/.exec(v);
+        cur.ref = m ? m[1].replace(/\s*[-–]\s*/, "–") : v;
+        field = "passage";
+      } else if (v) cur[field] = v;
+      continue;
+    }
+    if (!l) { if (cur[field]) cur[field] += "\n"; continue; }
+    cur[field] = cur[field] ? `${cur[field].replace(/\n$/, "\n\n")}${cur[field].endsWith("\n") ? "" : " "}${l}`.replace(/\n\n\n+/g, "\n\n") : l;
+  }
+  for (const d of out) for (const k of ["passage", "reflect", "respond", "pray"]) d[k] = d[k].trim();
+  return out;
+}
+
+function DevosEditor({ week, setWeek }) {
+  const [open, setOpen] = React.useState(false);
+  const [paste, setPaste] = React.useState("");
+  const [pmsg, setPmsg] = React.useState("");
+  const devos = week.devos || [];
+  const field = { ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:13.5 };
+  const lbl = { fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, margin:"0 0 4px", display:"block" };
+  const set = next => setWeek(week.id, "devos", next.slice().sort((a, b) => a.day - b.day));
+  const setD = (id, k, v) => set(devos.map(d => d.id === id ? { ...d, [k]: v } : d));
+  function add() {
+    const used = new Set(devos.map(d => d.day));
+    const day = [1, 2, 3, 4, 5, 6].find(x => !used.has(x)) || 6;
+    set([...devos, { id: genId(), day, title: "", ref: "", passage: "", reflect: "", respond: "", pray: "" }]);
+  }
+  function fill() {
+    const got = parseDevos(paste);
+    if (!got.length) { setPmsg("Couldn’t find the days. Start each one with “Day 1”, “Day 2”… or “Monday”, “Tuesday”…"); return; }
+    const byDay = Object.fromEntries(devos.map(d => [d.day, d]));
+    for (const g of got) byDay[g.day] = { ...g, id: byDay[g.day] ? byDay[g.day].id : g.id };
+    set(Object.values(byDay));
+    setPaste(""); setPmsg(`Filled in ${got.length} day${got.length === 1 ? "" : "s"}. Check them below, then Save series.`);
+  }
+  return (
+    <div style={{ background:"#1a1f2e", border:"1px solid #3d59a855", borderRadius:10, padding:"10px 12px", display:"flex", flexDirection:"column", gap:8 }}>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={{ display:"flex", alignItems:"center", gap:8, background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", fontFamily:"'Inter', system-ui, sans-serif" }}>
+        <span style={{ ...lbl, color:"#8ea3e3", margin:0 }}>Daily devos <span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>(students, parents, leaders)</span></span>
+        <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>{devos.length ? `${devos.length} day${devos.length === 1 ? "" : "s"}` : "none yet"}</span>
+        <ChevronRight size={15} color={C.muted} style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s" }} />
+      </button>
+      {open && (
+        <>
+          <textarea value={paste} onChange={e => { setPaste(e.target.value); setPmsg(""); }} rows={3} placeholder={"Paste devos to fill them in, e.g.\nDay 1 – Not Ashamed\nRead: Romans 1:16-17\nThink: …\nRespond: …\nPray: …\nDay 2 – …"} style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            {pmsg && <span style={{ fontSize:12, color: /Couldn/.test(pmsg) ? "#e07a5f" : C.accentLight, lineHeight:1.4 }}>{pmsg}</span>}
+            <button onClick={fill} disabled={!paste.trim()} style={{ ...S.reqAddBtn, marginLeft:"auto", opacity: paste.trim() ? 1 : 0.5 }}>Fill in devos</button>
+          </div>
+          {devos.map(d => (
+            <div key={d.id} style={{ borderTop:`1px solid ${C.faint}`, paddingTop:10, display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <select value={d.day} onChange={e => setD(d.id, "day", Number(e.target.value))} aria-label="Day" style={S.gradeSelect}>
+                  {[1, 2, 3, 4, 5, 6].map(x => <option key={x} value={x}>Day {x} · {DAY_NAMES[(new Date(week.date + "T12:00:00").getDay() + x) % 7]}</option>)}
+                </select>
+                <button onClick={() => set(devos.filter(x => x.id !== d.id))} style={{ marginLeft:"auto", background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Remove</button>
+              </div>
+              <input value={d.title} onChange={e => setD(d.id, "title", e.target.value)} placeholder="Title (e.g. Good news worth sharing)" aria-label="Devo title" style={field} />
+              <input value={d.ref} onChange={e => setD(d.id, "ref", e.target.value)} placeholder="Read: Bible reference (e.g. Romans 1:18–23)" aria-label="Bible reference" style={field} />
+              <textarea value={d.passage} onChange={e => setD(d.id, "passage", e.target.value)} rows={2} placeholder="Passage text (optional; otherwise people tap to open it in the Bible)" aria-label="Passage text" style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+              <div><label style={lbl}>Think</label><textarea value={d.reflect} onChange={e => setD(d.id, "reflect", e.target.value)} rows={3} placeholder="A short thought on the passage" style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+              <div><label style={lbl}>Respond</label><textarea value={d.respond} onChange={e => setD(d.id, "respond", e.target.value)} rows={2} placeholder="A question or something to do today" style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+              <div><label style={lbl}>Pray</label><textarea value={d.pray} onChange={e => setD(d.id, "pray", e.target.value)} rows={2} placeholder="A short prayer or prompt" style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+            </div>
+          ))}
+          {devos.length < 6 && <button onClick={add} style={{ ...S.addReqTrigger, justifyContent:"center", padding:"8px 12px", fontSize:12.5 }}><Plus size={13} style={{ marginRight:4 }} /> Add a day</button>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* Lessons tab: this week in full, then earlier weeks of the series */
+function LessonsView({ series, mode = "student" }) {
+  const [openId, setOpenId] = React.useState(null);
+  const cur = seriesWeek(series);
+  const maxWidth = mode === "leader" ? "none" : 400;
+  if (!series || !cur) return (
+    <div style={{ width:"100%", maxWidth, textAlign:"center", padding:"28px 0", color:"#80848a", fontSize:14, lineHeight:1.5 }}>
+      <BookOpen size={26} color="#80848a" style={{ marginBottom:8 }} /><br />The next lesson will show up here.
+    </div>
+  );
+  const weeks = series.weeks.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const earlier = weeks.filter(w => w.date < cur.week.date).reverse();
+  return (
+    <div style={{ width:"100%", maxWidth, display:"flex", flexDirection:"column" }}>
+      <div style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#80848a", margin:"0 2px 8px" }}>{cur.upcoming ? "Coming up" : "This week"}</div>
+      <SeriesCard series={series} mode={mode} full />
+      {earlier.length > 0 && (
+        <>
+          <div style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#80848a", margin:"6px 2px 8px" }}>Earlier in {series.name || "this series"}</div>
+          {earlier.map(w => {
+            const n = weeks.indexOf(w) + 1;
+            const open = openId === w.id;
+            return (
+              <div key={w.id} style={{ marginBottom: open ? 0 : 8 }}>
+                <button onClick={() => setOpenId(open ? null : w.id)} aria-expanded={open} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, background:"#1f2023", border:"1px solid #34363a", borderRadius: open ? "12px 12px 0 0" : 12, padding:"11px 14px", cursor:"pointer", textAlign:"left", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                  <span style={{ fontSize:12, color:"#8ea3e3", fontWeight:700, minWidth:52 }}>Week {n}</span>
+                  <span style={{ flex:1, minWidth:0 }}>
+                    <span style={{ display:"block", fontSize:14, color:"#f2f1ee", fontWeight:600 }}>{w.title || prettyDay(w.date)}</span>
+                    <span style={{ display:"block", fontSize:12, color:"#80848a" }}>{prettyDay(w.date)}{w.memoryRef ? ` · ⭐ ${w.memoryRef}` : w.verseRef ? ` · ${w.verseRef}` : ""}</span>
+                  </span>
+                  <ChevronRight size={16} color="#80848a" style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s" }} />
+                </button>
+                {open && <SeriesCard series={series} mode={mode} full hideArt pick={{ week: w, number: n, total: weeks.length, upcoming: false }} />}
+              </div>
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }
@@ -1541,7 +1824,7 @@ function SeriesEditor() {
   const weeks = (series?.weeks || []);
   function update(fn) { setSeries(prev => fn({ ...prev, weeks: (prev.weeks || []).slice() })); setDirty(true); setMsg(""); }
   function setWeek(id, field, value) { update(sr => ({ ...sr, weeks: sr.weeks.map(w => w.id === id ? { ...w, [field]: value } : w) })); }
-  const blankWeek = date => ({ id: genId(), date, title: "", verseRef: "", verseText: "", memoryRef: "", memoryText: "", prayerPrompt: "", parentPrompt: "", parentThink: "", parentPray: "" });
+  const blankWeek = date => ({ id: genId(), date, title: "", verseRef: "", verseText: "", memoryRef: "", memoryText: "", devos: [], prayerPrompt: "", parentPrompt: "", parentThink: "", parentPray: "" });
   function addWeek() {
     update(sr => {
       const last = sr.weeks.slice().sort((a, b) => a.date.localeCompare(b.date)).pop();
@@ -1658,6 +1941,7 @@ function SeriesEditor() {
               <div><label style={lbl}>Ask {hint("(one question per line)")}</label><textarea value={w.parentPrompt || ""} onChange={e => setWeek(w.id, "parentPrompt", e.target.value)} rows={3} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
               <div><label style={lbl}>Pray {hint("(one per line: “pray that they would…”)")}</label><textarea value={w.parentPray || ""} onChange={e => setWeek(w.id, "parentPray", e.target.value)} rows={2} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
             </div>
+            <DevosEditor week={w} setWeek={setWeek} />
             <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
               {confirmDel === w.id ? (
                 <>
@@ -2543,6 +2827,7 @@ export function ParentPage() {
   const [followUp, setFollowUp] = React.useState(false);
   const [contact, setContact] = React.useState("");
   const [done, setDone] = React.useState(false);
+  const [tab, setTab] = useHashTab(["lesson", "devos", "share", "calendar", "wall"], "lesson");
 
   const load = React.useCallback(() => {
     fetch("/api/submit", { cache: "no-store" }).then(r => r.json()).then(setInfo).catch(() => setInfo({ error: true }));
@@ -2608,6 +2893,7 @@ export function ParentPage() {
         <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>Thank you for trusting us with this.</p>
         <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>Our team will be praying for your family.</p>
         <button onClick={() => setDone(false)} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share another request</button>
+        <button onClick={() => { setDone(false); setTab("lesson"); }} style={{ background:"none", border:"none", color:"#74c464", fontSize:14, fontWeight:600, cursor:"pointer", marginTop:4 }}>See this week’s lesson →</button>
       </div>
     </div>
   );
@@ -2624,12 +2910,28 @@ export function ParentPage() {
       <span>{label}{sub && <><br /><span style={{ fontSize:12, color:"#80848a" }}>{sub}</span></>}</span>
     </label>
   );
+  const tabsRow = <PageTabs tab={tab} setTab={setTab} tabs={[["lesson", "Lesson"], ["devos", "Devos"], ["share", "Share"], ["calendar", "Calendar"], ["wall", "Wall"]]} />;
+  const page = children => <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>{header}{tabsRow}{children}</div>;
+  if (tab === "lesson") return page(<LessonsView series={series} mode="parent" />);
+  if (tab === "devos") return page(<DevosView series={series} mode="parent" />);
+  if (tab === "calendar") return page(
+    <>
+      <EventCards events={events} mode="parent" />
+      {calendar && calendar.configured
+        ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet." />
+        : <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"20px 0" }}>The calendar is coming soon.</p>}
+    </>
+  );
+  if (tab === "wall") return page(
+    <>
+      <p style={{ width:"100%", maxWidth:400, margin:"0 0 10px", fontSize:13, color:"#a9acb1", lineHeight:1.5, textAlign:"center" }}>These are requests our students chose to share with each other. Join them in praying.</p>
+      <PrayerWall />
+    </>
+  );
   return (
     <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
       {header}
-      <SeriesCard series={series} mode="parent" />
-      <EventCards events={events} mode="parent" />
-      <CalendarList cal={calendar} limit={4} />
+      {tabsRow}
       <div style={card}>
         <p style={{ margin:"4px 0 0", fontSize:12, color:"#80848a", textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:700 }}>Share a prayer request</p>
         <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
@@ -2804,7 +3106,7 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
     <div style={S.importWrap}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><InboxIcon size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Inbox</p></div>
       <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
-        Prayer requests, CAUSE Circle names, Gospel conversations, grades, birthdays and photos from students at <b style={{ color:C.cream }}>{location.origin}/submit</b>, plus parent requests. Nothing shows on a prayer card until you approve it.
+        Prayer requests, CAUSE Circle names, Gospel conversations, grades, birthdays and photos from students at <b style={{ color:C.cream }}>{location.origin}/students</b>, plus parent requests. Nothing shows on a prayer card until you approve it.
         {!studentCodeSet && <span style={{ color:C.orange }}> Set a student code in App Settings (People tab) to open the page.</span>}
       </p>
       {items.length === 0 && <p style={S.reportEmpty}>All caught up. No new submissions.</p>}
@@ -3133,8 +3435,9 @@ export default function App() {
     return () => window.removeEventListener("lp-signed-out", refresh);
   }, [refresh]);
 
-  if (typeof location !== "undefined" && location.pathname.replace(/\/+$/, "") === "/submit") return <StudentPage />;
-  if (typeof location !== "undefined" && location.pathname.replace(/\/+$/, "") === "/parents") return <ParentPage />;
+  const path = currentPath();
+  if (path === "/students" || path === "/submit") return <StudentPage />;
+  if (path === "/parents") return <ParentPage />;
   if (failed) return (
     <div style={authWrap}>
       <p style={{ color:"#f2f1ee", fontSize:16, marginBottom:12 }}>Can’t reach the server.</p>
@@ -3143,10 +3446,12 @@ export default function App() {
   );
   if (!status) return <LoadingScreen />;
   if (!status.configured) return <SetupScreen onComplete={setStatus} />;
-  if (status.role === "student" && !window.__LP_DEMO) return <StudentPage />;
-  if (status.role === "parent" && !window.__LP_DEMO) return <ParentPage />;
-  if (!status.role || status.role === "student" || status.role === "parent") return <LockScreen status={status} onSignedIn={setStatus} />;
-  return <AppMain settings={status} role={status.role} onStatus={setStatus} />;
+  const leader = status.role === "team" || status.role === "admin";
+  if (path === "/admin") return status.role === "admin" ? <AppMain settings={status} role="admin" onStatus={setStatus} /> : <LockScreen status={status} mode="admin" onSignedIn={setStatus} />;
+  if (path === "/leaders") return leader ? <AppMain settings={status} role={status.role} onStatus={setStatus} /> : <LockScreen status={status} mode="leader" onSignedIn={setStatus} />;
+  // Home page: leaders who saved the app to their Home Screen land right in it; everyone else picks where to go
+  if (leader) return <AppMain settings={status} role={status.role} onStatus={setStatus} />;
+  return <HomeChooser status={status} />;
 }
 
 function AppMain({ settings, role, onStatus }) {
@@ -3953,7 +4258,7 @@ function AppMain({ settings, role, onStatus }) {
 
       {/* Tabs */}
       <nav style={S.tabs}>
-        {[["pray","Pray"],["wall","Wall"],...(calendar && calendar.configured ? [["calendar","Calendar"]] : []),["week","Week"],["roster","Roster"]].map(([v, label]) => (
+        {[["pray","Pray"],["wall","Wall"],["lessons","Lessons"],["devos","Devos"],...(calendar && calendar.configured ? [["calendar","Calendar"]] : []),["week","Week"],["roster","Roster"]].map(([v, label]) => (
           <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
             {label}
             {v === "wall" && wallNew > 0 && view !== "wall" && <span style={S.tabBadge}>{wallNew}</span>}
@@ -4387,6 +4692,18 @@ function AppMain({ settings, role, onStatus }) {
       )}
 
       {/* ─── WEEK SUMMARY ─── */}
+      {view === "devos" && (
+        <div style={S.importWrap}>
+          <DevosView series={series} mode="leader" />
+        </div>
+      )}
+
+      {view === "lessons" && (
+        <div style={S.importWrap}>
+          <LessonsView series={series} mode="leader" />
+        </div>
+      )}
+
       {view === "calendar" && (
         <div style={S.importWrap}>
           <CalendarList cal={calendar} title="Calendar" maxWidth="none" emptyText="Nothing coming up on the BAND calendar." />

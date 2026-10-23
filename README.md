@@ -22,9 +22,11 @@ This copy has been customized for IMPACT Student Ministry. On top of the origina
 - **Photos:** shown on prayer cards and in the Roster. Admins add them in People; leaders can add or change them from a prayer card (camera button) or by tapping a face in the Roster; students can send their own from the student page, which waits in the Inbox for approval. Only admins can remove a photo
 - **Small groups:** create groups in the People tab, assign students and leaders, then filter the Pray deck and Roster by group
 - **CAUSE Circle:** each student's list of friends they're praying for to share the Gospel with, with a check-off for "heard the Gospel"
-- **Student page (`/submit`):** students send prayer requests and CAUSE Circle names; nothing appears until an admin approves it in the **Inbox** tab
+- **Page addresses:** `impactletspray.app` is a home page with buttons for Students, Parents and Leaders. **`/students`** is open to anyone (no code) with tabs for **Share**, **Lesson** (this week's message, memory verse practice, and earlier weeks), **Devos**, **Calendar** and **Wall** (Prayer Wall); the Calendar and Prayer Wall ask for the student code once per phone. **`/parents`** (parent code) has **Lesson**, **Devos**, **Share**, **Calendar** and **Wall**. **`/leaders`** is the leader sign-in (team code) and **`/admin`** is the admin sign-in. Old `/submit` links still work. Nothing students share appears until an admin approves it in the **Inbox**, and one phone can send at most 10 things an hour
+- **Daily devos (Devos tab for students, parents and leaders):** in Teach → Series, open a week's **Daily devos** and add up to 6 days (Day 1 = the Monday after the Sunday message). Each has a title, a Bible reference (tap to open it on Bible Gateway, ESV), optional passage text, Think, Respond and Pray. You can paste them all at once: start each with "Day 1 – Title" (or "Monday: Title") and use Read: / Think: / Respond: / Pray: lines. Today's devo opens first, and people can check off the ones they've done (saved on their phone). Parents see "Talk about it" instead of "Respond"
+- **Lessons tab (leaders):** every week of the current series, including what parents got (Think / Ask / Pray)
 - **Student info updates:** students include their grade and birthday (or send "Just my info"); approving in the Inbox updates the roster, with a checkbox to skip it
-- **Student Prayer Wall:** when sending a request, a student can choose to share it on the wall with their first name or anonymously. Nothing posts until an admin approves it. Students tap 🙏 "I prayed" on each other's requests (Prayer Wall tab at `/submit`). Admins can remove posts in the Inbox, and posts drop off after 30 days
+- **Student Prayer Wall:** when sending a request, a student can choose to share it on the wall with their first name or anonymously. Nothing posts until an admin approves it. Students tap 🙏 "I prayed" on each other's requests (Prayer Wall tab at `/students`, unlocked with the student code; parents can see and pray too). Admins can remove posts in the Inbox, and posts drop off after 30 days
 - **Gospel conversations:** students log how many Gospel conversations they had, who with, how it went, and the story. After you approve it in the Inbox, it's added to their record (and their friend is marked "heard the Gospel" in their CAUSE Circle). Leaders see the totals and latest story on the prayer card; stories collect in the Report tab; you set a monthly goal in Report → Team Goals. Students see the group's monthly total and goal (numbers only, no names) at the top of the Prayer Wall
 - **Parent page (`/parents`):** parents enter a parent code and share family prayer requests. They choose "our IMPACT leaders" (shows on their student's prayer card under "From their family") or "staff only" (confidential), can ask leaders not to mention it to their student, and can ask for a staff member to reach out. Everything waits in the Inbox; confidential requests and follow-ups go to an admin-only list at the bottom of the Inbox. Parents can't see the roster or the student Prayer Wall
 - **Teaching series (admin → Teach tab):** series name, artwork, and for each week the message date, title, verse, a prayer prompt, and the parent Think / Read / Ask / Pray. **Paste a weekly recap** fills in a week from your parent recap text. Each week appears on its date: leaders see it at the top of the Pray tab, students see it on the student page, and parents see Think / Read / Ask / Pray at the top of the parent page. The daily reminder adds "This week: (verse)" once you re-paste the reminder Worker
@@ -47,10 +49,10 @@ This copy has been customized for IMPACT Student Ministry. On top of the origina
 
 | Code | Who uses it | What they can do |
 |---|---|---|
-| **Admin password** | You | Everything: People, Inbox, Report, Import, settings, photos |
-| **Team code** | Leaders | Pray tab, Week, Roster: view the roster, mark prayed, add requests |
-| **Parent code** | Parents, at `/parents` | Send family prayer requests for approval. Parents can't see the roster or the Prayer Wall |
-| **Student code** | Students, at `/submit` | Send prayer requests, CAUSE Circle names, and grade/birthday for approval, and pray on the Prayer Wall. Students can't see the roster |
+| **Admin password** | You, at `/admin` | Everything: People, Inbox, Report, Import, settings, photos |
+| **Team code** | Leaders, at `/leaders` | Pray tab, Week, Roster: view the roster, mark prayed, add requests |
+| **Parent code** | Parents, at `/parents` | The weekly lesson, the calendar, the student Prayer Wall (view and pray), and family prayer requests for approval. Parents can't see the roster |
+| **Student code** | Students, at `/students` | Unlocks the Prayer Wall and Calendar on the student page. Sharing and the weekly lesson don't need a code. Students can't see the roster |
 
 Sign-ins are remembered for 90 days (leaders), 24 hours (admin), and 180 days (students). Changing a code signs out everyone using the old one.
 
@@ -58,7 +60,7 @@ Sign-ins are remembered for 90 days (leaders), 24 hours (admin), and 180 days (s
 
 1. Open the app and sign in with your **existing admin password**. It's upgraded to the secure format automatically.
 2. Go to **People → App Settings** at the bottom and **set a team code**. Leaders can't get in until you do.
-3. Optional: set a **student code** in the same place, and share `your-app-url/submit` with students.
+3. Optional: set a **student code** in the same place, and share `your-app-url/students` with students.
 
 Photos need no extra setup; they're stored in the same KV namespace as the roster.
 

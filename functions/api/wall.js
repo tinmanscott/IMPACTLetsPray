@@ -52,7 +52,7 @@ export async function onRequest(context) {
       context.waitUntil(notifyOnce(kv, post.notifyId, `wall:${id}`, {
         title: "Someone prayed for you 🙏",
         body: "Someone just prayed for your request on the Prayer Wall.",
-        url: "/submit",
+        url: "/students#wall",
       }));
     }
     return json({ ok: true, prayed: n });
