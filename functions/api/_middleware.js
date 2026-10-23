@@ -11,7 +11,8 @@ function requiredRole(path, url, method) {
     return "team"; // people: view + mark prayed (deletes are checked again in data.js)
   }
   if (path === "/api/photo") return method === "DELETE" ? "admin" : "team"; // leaders can add/change photos; only admins remove
-  if (path === "/api/submit") return method === "GET" ? "public" : "student";
+  if (path === "/api/submit") return method === "GET" ? "public" : "submit"; // students and parents send; details checked in submit.js
+  if (path === "/api/family") return "admin"; // staff-only family requests
   if (path === "/api/inbox") return "admin";
   if (path === "/api/wall") {
     const action = url.searchParams.get("action");
@@ -31,9 +32,11 @@ export async function onRequest(context) {
 
   const session = await getSession(request, env);
   data.session = session;
-  const ok = need === "admin" ? session.role === "admin"
-    : need === "student" ? !!session.role // students, leaders and admins can all submit
-    : session.role === "admin" || session.role === "team";
+  const r = session.role;
+  const ok = need === "admin" ? r === "admin"
+    : need === "submit" ? !!r                                        // anyone signed in can send something for approval
+    : need === "student" ? r === "student" || r === "team" || r === "admin" // Prayer Wall: not parents
+    : r === "admin" || r === "team";
   if (!ok) return json({ error: "Not signed in", need }, 401);
 
   const res = await next();

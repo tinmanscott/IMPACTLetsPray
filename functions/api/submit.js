@@ -2,18 +2,19 @@
 // Nothing here is shown to anyone until an admin approves it in the Inbox.
 //
 // GET  /api/submit  → { open, name, sub, role }   (public: tells the student page what to show)
-// POST /api/submit { name, kind: "request" | "cause" | "info" | "gospel", count?, friend?, outcome?, text, friends: [], grade?, birthday?: "MM-DD", photo?: "data:image/jpeg;base64,…" }
+// POST /api/submit { name, kind: "request" | "cause" | "info" | "gospel" | "parent", students?, privacy?, dontMention?, followUp?, contact?, count?, friend?, outcome?, text, friends: [], grade?, birthday?: "MM-DD", photo?: "data:image/jpeg;base64,…" }
 //   (student code or higher)
 import { getSession, publicSettings, json } from "../../lib/auth.js";
 import { addSubmission, savePendingPhoto, decodePhoto } from "../../lib/inbox.js";
 
 export async function onRequest(context) {
-  const { request, env } = context;
+  const { request, env, data: ctx } = context;
+  const role = ctx && ctx.session ? ctx.session.role : null;
 
   if (request.method === "GET") {
     const { role, settings } = await getSession(request, env);
     const pub = publicSettings(settings);
-    return json({ open: !!(pub && pub.studentCodeSet), name: pub ? pub.name : "", sub: pub ? pub.sub : "", configured: !!pub, role });
+    return json({ open: !!(pub && pub.studentCodeSet), parentOpen: !!(pub && pub.parentCodeSet), name: pub ? pub.name : "", sub: pub ? pub.sub : "", configured: !!pub, role });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
@@ -21,8 +22,11 @@ export async function onRequest(context) {
   try { body = await request.json(); } catch (_e) { return json({ error: "Invalid JSON" }, 400); }
 
   const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 80);
-  const KINDS = ["request", "cause", "info", "gospel"];
+  const KINDS = ["request", "cause", "info", "gospel", "parent"];
   const kind = KINDS.includes(body.kind) ? body.kind : "request";
+  // Parents can only send family requests; students can't send parent ones
+  if (role === "parent" && kind !== "parent") return json({ error: "Please use the parent page." }, 403);
+  if (role === "student" && kind === "parent") return json({ error: "Please use the student page." }, 403);
   if (name.length < 2) return json({ error: "Please enter your name." }, 400);
 
   // Optional roster details, applied only when an admin approves
@@ -46,7 +50,20 @@ export async function onRequest(context) {
   let text = "";
   let friends = [];
   let gospel = null;
-  if (kind === "gospel") {
+  let parent = null;
+  if (kind === "parent") {
+    // A family prayer request from a parent
+    text = String(body.text || "").trim().slice(0, 1200);
+    if (text.length < 3) return json({ error: "Please write your prayer request." }, 400);
+    const students = String(body.students || "").trim().replace(/\s+/g, " ").slice(0, 160);
+    parent = {
+      students,
+      privacy: body.privacy === "staff" ? "staff" : "leaders",
+      dontMention: body.dontMention === true,
+      followUp: body.followUp === true,
+      contact: body.followUp === true ? String(body.contact || "").trim().slice(0, 120) : "",
+    };
+  } else if (kind === "gospel") {
     // A Gospel conversation the student had: how many, who with, how it went, and the story
     const count = Math.round(Number(body.count));
     if (!Number.isFinite(count) || count < 1 || count > 50) return json({ error: "How many Gospel conversations did you have?" }, 400);
@@ -74,7 +91,7 @@ export async function onRequest(context) {
   const share = kind === "request" && body.share === true;
   const anonymous = share && body.anonymous === true;
 
-  const result = await addSubmission(env.INTERCEDE_KV, { name, kind, text, friends, grade, birthday, share, anonymous, hasPhoto: !!photo, gospel });
+  const result = await addSubmission(env.INTERCEDE_KV, { name, kind, text, friends, grade, birthday, share, anonymous, hasPhoto: !!photo, gospel, parent });
   if (!result.ok) return json({ error: result.error }, 429);
   if (photo) await savePendingPhoto(env.INTERCEDE_KV, result.id, photo);
   return json({ ok: true, id: result.id });

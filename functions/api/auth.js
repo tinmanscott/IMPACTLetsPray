@@ -7,13 +7,14 @@
 // POST /api/auth { action: "update", name?, sub?, teamCode?, newPassword?, currentPassword? }  (admin)
 import {
   getSession, loadSettings, saveSettings, publicSettings, hashSecret, verifySecret,
-  makeToken, cookieHeader, json, TEAM_COOKIE, ADMIN_COOKIE, TEAM_TTL, ADMIN_TTL, STUDENT_COOKIE, STUDENT_TTL,
+  makeToken, cookieHeader, json, TEAM_COOKIE, ADMIN_COOKIE, TEAM_TTL, ADMIN_TTL, STUDENT_COOKIE, STUDENT_TTL, PARENT_COOKIE, PARENT_TTL,
 } from "../../lib/auth.js";
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function sessionCookies(env, settings, role) {
-  if (role === "student") return [cookieHeader(STUDENT_COOKIE, await makeToken(env, "student", settings.studentVer || 1, STUDENT_TTL), STUDENT_TTL)];
+  if (role === "parent") return [cookieHeader(PARENT_COOKIE, await makeToken(env, "parent", settings.parentVer || 1, PARENT_TTL), PARENT_TTL), cookieHeader(STUDENT_COOKIE, "", 0)];
+  if (role === "student") return [cookieHeader(STUDENT_COOKIE, await makeToken(env, "student", settings.studentVer || 1, STUDENT_TTL), STUDENT_TTL), cookieHeader(PARENT_COOKIE, "", 0)];
   const cookies = [cookieHeader(TEAM_COOKIE, await makeToken(env, "team", settings.teamVer || 1, TEAM_TTL), TEAM_TTL)];
   if (role === "admin") cookies.push(cookieHeader(ADMIN_COOKIE, await makeToken(env, "admin", settings.adminVer || 1, ADMIN_TTL), ADMIN_TTL));
   return cookies;
@@ -70,6 +71,9 @@ export async function onRequest(context) {
     if (settings.studentHash && await verifySecret(code, settings.studentHash)) {
       return json(status(settings, "student"), 200, { "Set-Cookie": await sessionCookies(env, settings, "student") });
     }
+    if (settings.parentHash && await verifySecret(code, settings.parentHash)) {
+      return json(status(settings, "parent"), 200, { "Set-Cookie": await sessionCookies(env, settings, "parent") });
+    }
     await sleep(700); // slow down guessing
     return json({ error: "That code didn’t work." }, 401);
   }
@@ -77,7 +81,7 @@ export async function onRequest(context) {
   /* Sign out */
   if (action === "logout") {
     const cookies = [cookieHeader(ADMIN_COOKIE, "", 0)];
-    if (body.scope === "all") cookies.push(cookieHeader(TEAM_COOKIE, "", 0), cookieHeader(STUDENT_COOKIE, "", 0));
+    if (body.scope === "all") cookies.push(cookieHeader(TEAM_COOKIE, "", 0), cookieHeader(STUDENT_COOKIE, "", 0), cookieHeader(PARENT_COOKIE, "", 0));
     const { settings } = await getSession(new Request(request.url), env);
     return json(status(settings, body.scope === "all" ? null : "team"), 200, { "Set-Cookie": cookies });
   }
@@ -94,6 +98,7 @@ export async function onRequest(context) {
       if (body.teamCode.length < 4) return json({ error: "Team code must be at least 4 characters." }, 400);
       if (await verifySecret(body.teamCode, settings.adminHash)) return json({ error: "Team code must be different from the admin password." }, 400);
       if (settings.studentHash && await verifySecret(body.teamCode, settings.studentHash)) return json({ error: "Team code must be different from the student code." }, 400);
+      if (settings.parentHash && await verifySecret(body.teamCode, settings.parentHash)) return json({ error: "Team code must be different from the parent code." }, 400);
       next.teamHash = await hashSecret(body.teamCode);
       next.teamVer = (settings.teamVer || 1) + 1; // signs out everyone using the old code
     }
@@ -101,13 +106,24 @@ export async function onRequest(context) {
     if (typeof body.studentCode === "string" && body.studentCode) {
       const code = body.studentCode;
       if (code.length < 4) return json({ error: "Student code must be at least 4 characters." }, 400);
-      if (await verifySecret(code, settings.adminHash) || (next.teamHash && await verifySecret(code, next.teamHash))) {
-        return json({ error: "Student code must be different from the team code and admin password." }, 400);
+      if (await verifySecret(code, settings.adminHash) || (next.teamHash && await verifySecret(code, next.teamHash)) || (settings.parentHash && await verifySecret(code, settings.parentHash))) {
+        return json({ error: "Student code must be different from the team code, parent code and admin password." }, 400);
       }
       next.studentHash = await hashSecret(code);
       next.studentVer = (settings.studentVer || 1) + 1;
     }
     if (body.studentCode === null) { delete next.studentHash; next.studentVer = (settings.studentVer || 1) + 1; }
+
+    if (typeof body.parentCode === "string" && body.parentCode) {
+      const code = body.parentCode;
+      if (code.length < 4) return json({ error: "Parent code must be at least 4 characters." }, 400);
+      if (await verifySecret(code, settings.adminHash) || (next.teamHash && await verifySecret(code, next.teamHash)) || (next.studentHash && await verifySecret(code, next.studentHash))) {
+        return json({ error: "Parent code must be different from the team code, student code and admin password." }, 400);
+      }
+      next.parentHash = await hashSecret(code);
+      next.parentVer = (settings.parentVer || 1) + 1;
+    }
+    if (body.parentCode === null) { delete next.parentHash; next.parentVer = (settings.parentVer || 1) + 1; }
 
     let rotatedAdmin = false;
     if (typeof body.newPassword === "string" && body.newPassword) {

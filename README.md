@@ -26,6 +26,8 @@ This copy has been customized for IMPACT Student Ministry. On top of the origina
 - **Student info updates:** students include their grade and birthday (or send "Just my info"); approving in the Inbox updates the roster, with a checkbox to skip it
 - **Student Prayer Wall:** when sending a request, a student can choose to share it on the wall with their first name or anonymously. Nothing posts until an admin approves it. Students tap 🙏 "I prayed" on each other's requests (Prayer Wall tab at `/submit`). Admins can remove posts in the Inbox, and posts drop off after 30 days
 - **Gospel conversations:** students log how many Gospel conversations they had, who with, how it went, and the story. After you approve it in the Inbox, it's added to their record (and their friend is marked "heard the Gospel" in their CAUSE Circle). Leaders see the totals and latest story on the prayer card; stories collect in the Report tab; you set a monthly goal in Report → Team Goals. Students see the group's monthly total and goal (numbers only, no names) at the top of the Prayer Wall
+- **Parent page (`/parents`):** parents enter a parent code and share family prayer requests. They choose "our IMPACT leaders" (shows on their student's prayer card under "From their family") or "staff only" (confidential), can ask leaders not to mention it to their student, and can ask for a staff member to reach out. Everything waits in the Inbox; confidential requests and follow-ups go to an admin-only list at the bottom of the Inbox. Parents can't see the roster or the student Prayer Wall
+- **Staff and multiple groups:** mark any leader as Staff (badge and filter). Leaders can be MS & HS, and anyone can be in several small groups (for example a dGroup and an IMPACT group)
 - **My small group:** each leader picks their small group once on the Pray tab; the deck opens to that group, with a one-tap switch to Everyone. Their group is highlighted in the Week tab
 - **Streaks and goals:** a weekly team goal, a team streak, a personal daily streak, small group progress, and a Gospel-shared goal (Week tab; admins set goals in Report)
 - **Daily reminders:** each leader can turn on a push notification at the time they choose (Week tab)
@@ -37,6 +39,7 @@ This copy has been customized for IMPACT Student Ministry. On top of the origina
 |---|---|---|
 | **Admin password** | You | Everything: People, Inbox, Report, Import, settings, photos |
 | **Team code** | Leaders | Pray tab, Week, Roster: view the roster, mark prayed, add requests |
+| **Parent code** | Parents, at `/parents` | Send family prayer requests for approval. Parents can't see the roster or the Prayer Wall |
 | **Student code** | Students, at `/submit` | Send prayer requests, CAUSE Circle names, and grade/birthday for approval, and pray on the Prayer Wall. Students can't see the roster |
 
 Sign-ins are remembered for 90 days (leaders), 24 hours (admin), and 180 days (students). Changing a code signs out everyone using the old one.

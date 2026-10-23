@@ -257,18 +257,31 @@ function Avatar({ person, size = 40 }) {
   );
 }
 
+/* People can belong to several small groups (e.g. a dGroup and an IMPACT group),
+   and leaders can serve both MS and HS (group "both"). Older records used one smallGroupId. */
+function sgIds(p) {
+  if (!p) return [];
+  if (Array.isArray(p.smallGroupIds)) return p.smallGroupIds;
+  return p.smallGroupId ? [p.smallGroupId] : [];
+}
+const inSG = (p, id) => sgIds(p).includes(id);
+const inHS = p => p.group === "hs" || p.group === "both";
+const inMS = p => p.group === "ms" || p.group === "both";
+const groupLabel = g => g === "both" ? "MS & HS" : g ? g.toUpperCase() : "";
+
 // One place for every roster filter, including small groups ("sg:<id>")
 function matchesFilter(p, f) {
   if (!f || f === "all") return true;
-  if (f.startsWith("sg:")) return p.smallGroupId === f.slice(3);
+  if (f.startsWith("sg:")) return inSG(p, f.slice(3));
   if (f === "students") return p.type === "student";
   if (f === "leaders") return p.type === "leader";
-  if (f === "hs") return p.group === "hs";
-  if (f === "ms") return p.group === "ms";
-  if (f === "hs-students") return p.type === "student" && p.group === "hs";
-  if (f === "ms-students") return p.type === "student" && p.group === "ms";
-  if (f === "hs-leaders") return p.type === "leader" && p.group === "hs";
-  if (f === "ms-leaders") return p.type === "leader" && p.group === "ms";
+  if (f === "staff") return !!p.staff;
+  if (f === "hs") return inHS(p);
+  if (f === "ms") return inMS(p);
+  if (f === "hs-students") return p.type === "student" && inHS(p);
+  if (f === "ms-students") return p.type === "student" && inMS(p);
+  if (f === "hs-leaders") return p.type === "leader" && inHS(p);
+  if (f === "ms-leaders") return p.type === "leader" && inMS(p);
   return true;
 }
 
@@ -724,6 +737,8 @@ function LockScreen({ status, onSignedIn }) {
     setBusy(true); setErr("");
     try {
       const res = await apiAuth("login", { code: code.trim() });
+      if (res.role === "parent" && !window.__LP_DEMO) { location.href = "/parents"; return; }
+      if (res.role === "student" && !window.__LP_DEMO) { location.href = "/submit"; return; }
       onSignedIn(res);
     } catch (e) { setErr(e.message); setBusy(false); setCode(""); }
   }
@@ -742,6 +757,12 @@ function LockScreen({ status, onSignedIn }) {
         <button onClick={submit} disabled={busy} style={{ ...authBtn, opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Lock size={15} /> {busy ? "Checking…" : "Sign In"}</button>
       </div>
       <p style={{ fontSize:12, color:"#5c6066", marginTop:28, textAlign:"center", maxWidth:300, lineHeight:1.5 }}>Ask your student ministry leader if you don’t have the code.</p>
+      {(status.studentCodeSet || status.parentCodeSet) && (
+        <p style={{ fontSize:12.5, color:"#80848a", marginTop:6, textAlign:"center", maxWidth:320, lineHeight:1.6 }}>
+          {status.studentCodeSet && <>Students: <a href="/submit" style={{ color:"#7fd06c" }}>share a prayer request</a><br /></>}
+          {status.parentCodeSet && <>Parents: <a href="/parents" style={{ color:"#7fd06c" }}>share a prayer request for your family</a></>}
+        </p>
+      )}
     </div>
   );
 }
@@ -828,6 +849,7 @@ function SettingsCard({ settings, onStatus }) {
   const [sub, setSub] = React.useState(settings.sub || "");
   const [team, setTeam] = React.useState("");
   const [student, setStudent] = React.useState("");
+  const [parentCode, setParentCode] = React.useState("");
   const [curPw, setCurPw] = React.useState("");
   const [newPw, setNewPw] = React.useState("");
   const [msg, setMsg] = React.useState({});
@@ -873,6 +895,22 @@ function SettingsCard({ settings, onStatus }) {
           {settings.studentCodeSet && <button onClick={() => save("student", { studentCode: null })} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", padding:0 }}>Close the student page</button>}
         </div>
         {note("student")}
+      </div>
+
+      <div>
+        {label(settings.parentCodeSet ? "Change parent code" : "Parent code (optional)")}
+        <p style={{ margin:"0 0 8px", fontSize:12, color:C.muted, lineHeight:1.5 }}>
+          Parents use this at <b style={{ color:C.cream }}>{location.origin}/parents</b> to share family prayer requests. You approve them in the Inbox. Parents can’t see the roster or the student Prayer Wall.
+        </p>
+        <div style={row}>
+          <input value={parentCode} onChange={e => setParentCode(e.target.value)} placeholder="Parent code (4+ characters)" style={inp} autoCapitalize="none" autoCorrect="off" />
+          <button disabled={busy === "parent" || parentCode.trim().length < 4} onClick={() => save("parent", { parentCode: parentCode.trim() }, () => setParentCode(""))} style={{ ...S.reqAddBtn, opacity: parentCode.trim().length < 4 ? 0.5 : 1 }}>Save</button>
+        </div>
+        <div style={{ display:"flex", gap:12, marginTop:6 }}>
+          <button onClick={() => { try { navigator.clipboard.writeText(`${location.origin}/parents`); setMsg({ parent: { ok: true, text: "Link copied." } }); } catch (_e) {} }} style={{ background:"none", border:"none", color:C.accent, fontSize:12, cursor:"pointer", padding:0 }}>Copy parent link</button>
+          {settings.parentCodeSet && <button onClick={() => save("parent", { parentCode: null })} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", padding:0 }}>Close the parent page</button>}
+        </div>
+        {note("parent")}
       </div>
 
       <div>
@@ -1286,6 +1324,131 @@ function wallName(item) {
   return (item.name || "").trim().split(/\s+/)[0] || "Anonymous";
 }
 
+/* ── Parent page (/parents) ── */
+const PARENT_NAME_KEY = "lp-parent-name";
+const PARENT_KIDS_KEY = "lp-parent-kids";
+
+export function ParentPage() {
+  const [info, setInfo] = React.useState(null);
+  const [code, setCode] = React.useState("");
+  const [err, setErr] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [name, setName] = React.useState(() => lsGet(PARENT_NAME_KEY) || "");
+  const [kids, setKids] = React.useState(() => lsGet(PARENT_KIDS_KEY) || "");
+  const [text, setText] = React.useState("");
+  const [privacy, setPrivacy] = React.useState("leaders");
+  const [dontMention, setDontMention] = React.useState(false);
+  const [followUp, setFollowUp] = React.useState(false);
+  const [contact, setContact] = React.useState("");
+  const [done, setDone] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    fetch("/api/submit", { cache: "no-store" }).then(r => r.json()).then(setInfo).catch(() => setInfo({ error: true }));
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  async function signIn() {
+    if (!code.trim()) return;
+    setBusy(true); setErr("");
+    try { await apiAuth("login", { code: code.trim() }); load(); setCode(""); }
+    catch (e) { setErr(e.message); setCode(""); }
+    setBusy(false);
+  }
+
+  async function submit() {
+    setErr("");
+    if (name.trim().length < 2) return setErr("Please enter your name.");
+    if (text.trim().length < 3) return setErr("Please write your prayer request.");
+    if (followUp && contact.trim().length < 5) return setErr("Add a phone number or email so we can reach you.");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "parent", name: name.trim(), students: kids.trim(), text: text.trim(), privacy, dontMention, followUp, contact: followUp ? contact.trim() : "" }) });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401 || res.status === 403) { load(); throw new Error("Please enter the parent code again."); }
+      if (!res.ok) throw new Error(data.error || "That didn’t send. Please try again.");
+      lsSet(PARENT_NAME_KEY, name.trim()); lsSet(PARENT_KIDS_KEY, kids.trim() || null);
+      setDone(true); setText(""); setDontMention(false); setFollowUp(false); setContact(""); setPrivacy("leaders");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  const card = { width:"100%", maxWidth:400, display:"flex", flexDirection:"column", gap:12 };
+  const header = (
+    <>
+      <img src="/logo.png" alt={info?.name || ""} style={{ width: 210, height: "auto", marginBottom: 10 }} />
+      <p style={{ fontSize:12, color:"#80848a", margin:"0 0 6px", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>For parents</p>
+      <p style={{ fontSize:14, color:"#80848a", margin:"0 0 22px", textAlign:"center", maxWidth:320, lineHeight:1.5 }}>Share how our leaders can pray for your family.</p>
+    </>
+  );
+  const signedIn = info && (info.role === "parent" || info.role === "team" || info.role === "admin");
+
+  if (!info) return <LoadingScreen />;
+  if (info.error || !info.configured || !info.parentOpen) return (
+    <div style={authWrap}>{header}<p style={{ color:"#80848a", fontSize:14, textAlign:"center", maxWidth:300, lineHeight:1.5 }}>This page isn’t open yet. Please check back soon.</p></div>
+  );
+  if (!signedIn) return (
+    <div style={authWrap}>
+      {header}
+      <div style={{ ...card, maxWidth:320 }}>
+        <p style={{ fontSize:14, color:"#80848a", margin:"0 0 4px", textAlign:"center", lineHeight:1.5 }}>Enter the parent code from our student ministry team.</p>
+        <input autoFocus value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === "Enter" && signIn()} placeholder="Parent code" style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
+        {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0, textAlign:"center" }}>{err}</p>}
+        <button onClick={signIn} disabled={busy} style={{ ...authBtn, opacity: busy ? 0.7 : 1 }}>{busy ? "Checking…" : "Continue"}</button>
+      </div>
+    </div>
+  );
+  if (done) return (
+    <div style={authWrap}>
+      {header}
+      <div style={{ ...card, alignItems:"center", textAlign:"center" }}>
+        <Heart size={40} color="#5aba47" fill="#5aba47" />
+        <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>Thank you for trusting us with this.</p>
+        <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>Our team will be praying for your family.</p>
+        <button onClick={() => setDone(false)} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share another request</button>
+      </div>
+    </div>
+  );
+
+  const option = (v, title, sub) => (
+    <button onClick={() => setPrivacy(v)} aria-pressed={privacy === v} style={{ textAlign:"left", padding:"12px 14px", borderRadius:10, border:`1px solid ${privacy === v ? "#5aba47" : "#34363a"}`, background: privacy === v ? "#18241a" : "#1f2023", cursor:"pointer", display:"flex", gap:10, alignItems:"flex-start" }}>
+      <span style={{ width:18, height:18, borderRadius:"50%", border:`2px solid ${privacy === v ? "#5aba47" : "#4a4d52"}`, flexShrink:0, marginTop:1, display:"flex", alignItems:"center", justifyContent:"center" }}>{privacy === v && <span style={{ width:8, height:8, borderRadius:"50%", background:"#5aba47" }} />}</span>
+      <span><span style={{ display:"block", fontSize:14, fontWeight:600, color:"#f2f1ee" }}>{title}</span><span style={{ display:"block", fontSize:12.5, color:"#80848a", lineHeight:1.4, marginTop:2 }}>{sub}</span></span>
+    </button>
+  );
+  const check = (checked, set, label, sub) => (
+    <label style={{ display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer", fontSize:14, color:"#f2f1ee", lineHeight:1.4 }}>
+      <input type="checkbox" checked={checked} onChange={e => set(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#5aba47", flexShrink:0 }} />
+      <span>{label}{sub && <><br /><span style={{ fontSize:12, color:"#80848a" }}>{sub}</span></>}</span>
+    </label>
+  );
+  return (
+    <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
+      {header}
+      <div style={card}>
+        <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
+        <div><label style={authLbl}>Your student(s) in IMPACT</label><input value={kids} onChange={e => setKids(e.target.value)} placeholder="e.g. Ethan Brooks" style={authInp} /></div>
+        <div>
+          <label style={authLbl}>How can we pray for your family?</label>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={5} maxLength={1200} placeholder="Share as much or as little as you’d like." style={{ ...authInp, resize:"vertical", lineHeight:1.5 }} />
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          <label style={{ ...authLbl, marginBottom:0 }}>Who should see this?</label>
+          {option("leaders", "Our IMPACT leaders", "Leaders see it on your student’s prayer card and pray for your family.")}
+          {option("staff", "Student ministry staff only", "Kept confidential. Only our staff will see it.")}
+        </div>
+        <div style={{ background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:12 }}>
+          {check(dontMention, setDontMention, "Please don’t mention this to my student")}
+          {check(followUp, setFollowUp, "I’d like a staff member to reach out", "Only our staff will see your contact info.")}
+          {followUp && <input value={contact} onChange={e => setContact(e.target.value)} placeholder="Phone number or email" style={authInp} autoComplete="tel" />}
+        </div>
+        {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0 }}>{err}</p>}
+        <button onClick={submit} disabled={busy} style={{ ...authBtn, background:"#e95e24", opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Send size={15} /> {busy ? "Sending…" : "Send to our leaders"}</button>
+        <p style={{ fontSize:12, color:"#5c6066", margin:"4px 0 24px", textAlign:"center", lineHeight:1.5 }}>Our student ministry staff reads every request before it’s shared with leaders.</p>
+      </div>
+    </div>
+  );
+}
+
 /* ── Admin inbox ── */
 const normName = n => (n || "").toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim();
 
@@ -1304,13 +1467,33 @@ function guessPerson(name, people) {
   return firstMatches.length === 1 ? firstMatches[0].id : "";
 }
 
-function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
+// For a parent request, match on their student's name instead of the parent's
+function matchName(item) {
+  if (item.kind === "parent") return ((item.parent && item.parent.students) || "").split(/,|&|\band\b/i)[0].trim();
+  return item.name;
+}
+
+function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentCodeSet }) {
   const [match, setMatch] = React.useState({});
   const [edits, setEdits] = React.useState({});
   const [skipInfo, setSkipInfo] = React.useState({});
   const [skipWall, setSkipWall] = React.useState({});
   const [skipPhoto, setSkipPhoto] = React.useState({});
   const [skipCause, setSkipCause] = React.useState({});
+  const [privacyFor, setPrivacyFor] = React.useState({});
+  const [family, setFamily] = React.useState([]);
+  const loadFamily = React.useCallback(() => {
+    fetch("/api/family").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setFamily(l)).catch(() => {});
+  }, []);
+  React.useEffect(() => { loadFamily(); }, [loadFamily]);
+  async function addFamily(entry) {
+    await fetch("/api/family", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "add", entry }) }).catch(() => {});
+    loadFamily();
+  }
+  async function familyAction(action, id, extra = {}) {
+    setFamily(prev => action === "remove" ? prev.filter(f => f.id !== id) : prev.map(f => f.id === id ? { ...f, done: extra.done } : f));
+    await fetch("/api/family", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, id, ...extra }) }).catch(() => {});
+  }
   const [wall, setWall] = React.useState([]);
   const loadWall = React.useCallback(() => {
     fetch("/api/wall").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setWall(l)).catch(() => {});
@@ -1327,8 +1510,27 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
   const choices = React.useMemo(() => people.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)), [people]);
 
   async function approve(item) {
-    const chosen = match[item.id] ?? guessPerson(item.name, choices);
+    const chosen = match[item.id] ?? guessPerson(matchName(item), choices);
     const text = (edits[item.id] ?? item.text ?? "").trim();
+    if (item.kind === "parent") {
+      const pi = item.parent || {};
+      const privacy = privacyFor[item.id] || pi.privacy || "leaders";
+      const target = choices.find(p => p.id === chosen);
+      if (privacy === "staff" || pi.followUp) {
+        await addFamily({ at: item.createdAt, parent: item.name, students: pi.students, personId: target ? target.id : "", text, staffOnly: privacy === "staff", dontMention: !!pi.dontMention, followUp: !!pi.followUp, contact: pi.contact });
+      }
+      if (privacy === "leaders") {
+        if (!chosen) return;
+        const entry = { id: genId(), at: item.createdAt || Date.now(), from: item.name, text, dontMention: !!pi.dontMention };
+        const addFam = p => ({ ...p, familyRequests: [entry, ...(p.familyRequests || [])], updatedAt: Date.now() });
+        if (chosen === "__new") {
+          const nm = matchName(item) || "New student";
+          setPeople(prev => [...prev, addFam({ id: genId(), name: nm, type: "student", group: null, grade: null, active: true, prayedAt: null, prayerRequests: [], causeCircle: [], birthday: "", updatedAt: Date.now() })]);
+        } else setPeople(prev => prev.map(p => p.id === chosen ? addFam(p) : p));
+      }
+      onRemove([item.id]);
+      return;
+    }
     const friends = item.kind === "cause"
       ? (edits[item.id] !== undefined ? edits[item.id].split(/[,\n]/) : item.friends || []).map(f => f.trim()).filter(Boolean)
       : [];
@@ -1382,23 +1584,34 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
   const box = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:8 };
   return (
     <div style={S.importWrap}>
-      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><InboxIcon size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Student Inbox</p></div>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><InboxIcon size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Inbox</p></div>
       <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
-        Prayer requests, CAUSE Circle names, Gospel conversations, grades, birthdays and photos students send from <b style={{ color:C.cream }}>{location.origin}/submit</b>. Nothing shows on a prayer card until you approve it.
+        Prayer requests, CAUSE Circle names, Gospel conversations, grades, birthdays and photos from students at <b style={{ color:C.cream }}>{location.origin}/submit</b>, plus parent requests. Nothing shows on a prayer card until you approve it.
         {!studentCodeSet && <span style={{ color:C.orange }}> Set a student code in App Settings (People tab) to open the page.</span>}
       </p>
       {items.length === 0 && <p style={S.reportEmpty}>All caught up. No new submissions.</p>}
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
         {items.slice().sort((a, b) => a.createdAt - b.createdAt).map(item => {
-          const chosen = match[item.id] ?? guessPerson(item.name, choices);
-          const value = edits[item.id] ?? (item.kind === "request" || item.kind === "gospel" ? item.text : (item.friends || []).join(", "));
+          const chosen = match[item.id] ?? guessPerson(matchName(item), choices);
+          const value = edits[item.id] ?? (item.kind === "request" || item.kind === "gospel" || item.kind === "parent" ? item.text : (item.friends || []).join(", "));
+          const isParent = item.kind === "parent";
+          const pi = item.parent || {};
+          const privacy = privacyFor[item.id] || pi.privacy || "leaders";
+          const canApprove = isParent ? (privacy === "staff" || !!chosen) : !!chosen;
           return (
             <div key={item.id} style={box}>
               <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
                 <span style={{ fontSize:14, color:C.cream, fontWeight:600 }}>{item.name}</span>
-                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : item.kind === "gospel" ? { background:"#2a1a12", color:C.orange } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : item.kind === "gospel" ? "Gospel conversation" : "Prayer request"}</span>
+                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : item.kind === "gospel" ? { background:"#2a1a12", color:C.orange } : isParent ? { background:"#2a2433", color:"#b49ad0" } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : item.kind === "gospel" ? "Gospel conversation" : isParent ? "Parent request" : "Prayer request"}</span>
                 <span style={{ marginLeft:"auto", fontSize:11, color:C.muted }}>{timeAgo(item.createdAt)}</span>
               </div>
+              {isParent && (
+                <div style={{ fontSize:13, color:C.muted, lineHeight:1.5 }}>
+                  Parent of <b style={{ color:C.cream }}>{pi.students || "(student not given)"}</b>
+                  {pi.dontMention && <span style={{ ...S.badgeSm, marginLeft:6, background:"#2a1a12", color:C.orange, textTransform:"none", letterSpacing:0 }}>Don’t mention to student</span>}
+                  {pi.followUp && <div style={{ marginTop:4, color:C.cream }}>Wants a staff member to reach out: <span style={{ userSelect:"all" }}>{pi.contact || "(no contact given)"}</span></div>}
+                </div>
+              )}
               {item.kind === "gospel" && item.gospel && (
                 <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"baseline", fontSize:13.5, color:C.cream }}>
                   <span style={{ fontSize:20, fontWeight:800, color:C.orange, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{item.gospel.count}</span>
@@ -1407,7 +1620,7 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
                 </div>
               )}
               {item.kind === "gospel" && !value && !edits[item.id] ? null : item.kind !== "info" && (
-                <textarea value={value} onChange={e => setEdits(prev => ({ ...prev, [item.id]: e.target.value }))} rows={item.kind === "request" ? 3 : 2}
+                <textarea value={value} onChange={e => setEdits(prev => ({ ...prev, [item.id]: e.target.value }))} rows={item.kind === "request" || isParent ? 3 : 2}
                   style={{ ...S.reqInput, resize:"vertical", lineHeight:1.45, fontSize:13.5 }} />
               )}
               {item.kind === "gospel" && item.gospel && item.gospel.friend && (() => {
@@ -1448,21 +1661,56 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet }) {
                   </label>
                 );
               })()}
+              {isParent && (
+                <div style={{ display:"flex", gap:6 }}>
+                  {[["leaders", "Show to leaders on card"], ["staff", "Staff only"]].map(([v, l]) => (
+                    <button key={v} onClick={() => setPrivacyFor(prev => ({ ...prev, [item.id]: v }))} style={{ flex:1, padding:"7px 6px", borderRadius:8, fontSize:12.5, cursor:"pointer", border:`1px solid ${privacy === v ? C.accent : C.border}`, background: privacy === v ? C.accentBg : "none", color: privacy === v ? C.cream : C.muted, fontFamily:"'Inter', system-ui, sans-serif" }}>{l}{pi.privacy === v ? " (their choice)" : ""}</button>
+                  ))}
+                </div>
+              )}
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={S.gradeLabel}>Add to</span>
-                <select value={chosen} onChange={e => setMatch(prev => ({ ...prev, [item.id]: e.target.value }))} style={{ ...S.gradeSelect, flex:1, minWidth:0, borderColor: chosen ? C.border : C.orange }}>
-                  <option value="">Choose a person…</option>
-                  <option value="__new">+ New student: {item.name}</option>
+                <span style={S.gradeLabel}>{isParent ? (privacy === "staff" ? "Student (optional)" : "Their student") : "Add to"}</span>
+                <select value={chosen} onChange={e => setMatch(prev => ({ ...prev, [item.id]: e.target.value }))} style={{ ...S.gradeSelect, flex:1, minWidth:0, borderColor: chosen || (isParent && privacy === "staff") ? C.border : C.orange }}>
+                  <option value="">{isParent && privacy === "staff" ? "Not linked to a student" : "Choose a person…"}</option>
+                  <option value="__new">+ New student: {matchName(item) || item.name}</option>
                   {choices.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
                 <button onClick={() => onRemove([item.id])} style={S.cancelBtn}>Reject</button>
-                <button onClick={() => approve(item)} disabled={!chosen} style={{ ...S.confirmBtn, opacity: chosen ? 1 : 0.5 }}>Approve</button>
+                <button onClick={() => approve(item)} disabled={!canApprove} style={{ ...S.confirmBtn, opacity: canApprove ? 1 : 0.5 }}>Approve</button>
               </div>
             </div>
           );
         })}
+      </div>
+
+      <div style={{ display:"flex", alignItems:"center", gap:8, margin:"26px 0 4px" }}><Lock size={15} color="#b49ad0" /><p style={{ ...S.reportTitle, margin:0, color:"#b49ad0" }}>Family requests: staff only & follow-ups</p></div>
+      <p style={{ margin:"0 0 12px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
+        Confidential parent requests and parents who asked for a call. Only admins see this list.
+        {parentCodeSet ? <> Parents share at <b style={{ color:C.cream }}>{location.origin}/parents</b>.</> : <span style={{ color:C.orange }}> Set a parent code in App Settings (People tab) to open the parent page.</span>}
+      </p>
+      {family.length === 0 && <p style={S.reportEmpty}>Nothing here yet.</p>}
+      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        {family.map(f => (
+          <div key={f.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 12px", display:"flex", flexDirection:"column", gap:6, opacity: f.done ? 0.6 : 1 }}>
+            <div style={{ display:"flex", alignItems:"baseline", gap:6, flexWrap:"wrap" }}>
+              <span style={{ fontSize:13, color:C.cream, fontWeight:600 }}>{f.parent}</span>
+              {f.students && <span style={{ fontSize:12, color:C.muted }}>· parent of {f.students}</span>}
+              <span style={{ marginLeft:"auto", fontSize:11, color:C.muted }}>{timeAgo(f.at)}</span>
+            </div>
+            <div style={{ fontSize:13, color:C.cream, lineHeight:1.45, whiteSpace:"pre-wrap" }}>{f.text}</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {f.staffOnly && <span style={{ ...S.badgeSm, background:"#2a2433", color:"#b49ad0", textTransform:"none", letterSpacing:0 }}>Staff only</span>}
+              {f.dontMention && <span style={{ ...S.badgeSm, background:"#2a1a12", color:C.orange, textTransform:"none", letterSpacing:0 }}>Don’t mention to student</span>}
+              {f.followUp && <span style={{ ...S.badgeSm, background:C.accentBg, color:C.accentLight, textTransform:"none", letterSpacing:0 }}>Reach out: <span style={{ userSelect:"all" }}>{f.contact || "no contact given"}</span></span>}
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={() => familyAction("remove", f.id)} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12 }}>Remove</button>
+              <button onClick={() => familyAction("done", f.id, { done: !f.done })} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12, color: f.done ? C.accentLight : C.cream }}>{f.done ? "✓ Done" : f.followUp ? "Mark followed up" : "Mark prayed"}</button>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div style={{ display:"flex", alignItems:"center", gap:8, margin:"26px 0 4px" }}><Heart size={16} color={C.orange} /><p style={{ ...S.reportTitle, margin:0, color:C.orange }}>On the Prayer Wall now</p></div>
@@ -1524,7 +1772,7 @@ function GoalsCard({ goals, activePeople, weekHistory, smallGroups, myGroupId })
   const friends = activePeople.reduce((n, p) => n + (p.causeCircle || []).length, 0);
   const shared = activePeople.reduce((n, p) => n + (p.causeCircle || []).filter(f => f.shared).length, 0);
   const groupRows = smallGroups.map(g => {
-    const list = activePeople.filter(p => p.smallGroupId === g.id);
+    const list = activePeople.filter(p => inSG(p, g.id));
     return { id: g.id, name: g.name, total: list.length, done: list.filter(p => withinWeek(p.prayedAt)).length };
   }).filter(r => r.total > 0);
 
@@ -1651,6 +1899,7 @@ export default function App() {
   }, [refresh]);
 
   if (typeof location !== "undefined" && location.pathname.replace(/\/+$/, "") === "/submit") return <StudentPage />;
+  if (typeof location !== "undefined" && location.pathname.replace(/\/+$/, "") === "/parents") return <ParentPage />;
   if (failed) return (
     <div style={authWrap}>
       <p style={{ color:"#f2f1ee", fontSize:16, marginBottom:12 }}>Can’t reach the server.</p>
@@ -1659,7 +1908,7 @@ export default function App() {
   );
   if (!status) return <LoadingScreen />;
   if (!status.configured) return <SetupScreen onComplete={setStatus} />;
-  if (!status.role || status.role === "student") return <LockScreen status={status} onSignedIn={setStatus} />;
+  if (!status.role || status.role === "student" || status.role === "parent") return <LockScreen status={status} onSignedIn={setStatus} />;
   return <AppMain settings={status} role={status.role} onStatus={setStatus} />;
 }
 
@@ -2120,7 +2369,7 @@ function AppMain({ settings, role, onStatus }) {
   function cycleGroup(id) {
     setPeople(prev => prev.map(p => {
       if (p.id !== id) return p;
-      if (p.type === "leader") return { ...p, group: p.group === "hs" ? "ms" : p.group === "ms" ? null : "hs", updatedAt: Date.now() };
+      if (p.type === "leader") return { ...p, group: p.group === "hs" ? "ms" : p.group === "ms" ? "both" : p.group === "both" ? null : "hs", updatedAt: Date.now() };
       return { ...p, group: p.group === "hs" ? "ms" : p.group === "ms" ? null : "hs", updatedAt: Date.now() };
     }));
   }
@@ -2133,11 +2382,11 @@ function AppMain({ settings, role, onStatus }) {
   function restore(id) { setPeople(prev => prev.map(p => p.id === id ? { ...p, active: true, updatedAt: Date.now() } : p)); }
   function exportRoster() {
     const rows = [
-      ["First Name", "Last Name", "Type", "Group", "Grade", "Birthday", "Small Group"],
+      ["First Name", "Last Name", "Type", "Staff", "Group", "Grade", "Birthday", "Small Groups"],
       ...people.filter(p => p.active !== false).map(p => {
         const [first, ...rest] = (p.name || "").trim().split(" ");
         const last = rest.join(" ");
-        return [first, last, p.type || "", (p.group || "").toUpperCase(), p.grade || "", p.birthday || "", groupName(p.smallGroupId) || ""];
+        return [first, last, p.type || "", p.staff ? "Yes" : "", groupLabel(p.group), p.grade || "", p.birthday || "", sgIds(p).map(groupName).filter(Boolean).join("; ")];
       })
     ];
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -2241,7 +2490,7 @@ function AppMain({ settings, role, onStatus }) {
 
   function deleteSmallGroup(id) {
     saveGroups(smallGroups.filter(g => g.id !== id));
-    setPeople(prev => prev.map(p => p.smallGroupId === id ? { ...p, smallGroupId: null, updatedAt: Date.now() } : p));
+    setPeople(prev => prev.map(p => inSG(p, id) ? { ...p, smallGroupIds: sgIds(p).filter(x => x !== id), smallGroupId: null, updatedAt: Date.now() } : p));
     if (filter === `sg:${id}`) setFilter("all");
     if (rosterSmallGroup === id) setRosterSmallGroup("all");
     if (peopleGroupFilter === id) setPeopleGroupFilter("all");
@@ -2249,7 +2498,17 @@ function AppMain({ settings, role, onStatus }) {
   }
 
   function assignSmallGroup(personId, groupId) {
-    setPeople(prev => prev.map(p => p.id === personId ? { ...p, smallGroupId: groupId || null, updatedAt: Date.now() } : p));
+    // Toggle membership in one group; a person can be in several
+    setPeople(prev => prev.map(p => {
+      if (p.id !== personId) return p;
+      const ids = sgIds(p);
+      const next = ids.includes(groupId) ? ids.filter(x => x !== groupId) : [...ids, groupId];
+      return { ...p, smallGroupIds: next, smallGroupId: null, updatedAt: Date.now() };
+    }));
+  }
+
+  function toggleStaff(personId) {
+    setPeople(prev => prev.map(p => p.id === personId ? { ...p, staff: !p.staff, updatedAt: Date.now() } : p));
   }
 
   const groupName = id => smallGroups.find(g => g.id === id)?.name || null;
@@ -2470,6 +2729,7 @@ function AppMain({ settings, role, onStatus }) {
               <option value="ms-students">MS Students</option>
               <option value="hs-students">HS Students</option>
               <option value="leaders">Leaders</option>
+              {people.some(p => p.staff && p.active !== false) && <option value="staff">Staff</option>}
               {smallGroups.length > 0 && (
                 <optgroup label="Small Groups">
                   {smallGroups.map(g => <option key={g.id} value={`sg:${g.id}`}>{g.name}</option>)}
@@ -2576,9 +2836,10 @@ function AppMain({ settings, role, onStatus }) {
                         <div style={{ ...S.badge, ...(current?.type === "leader" ? S.leaderBadge : S.studentBadge) }}>
                           {current?.type === "leader" ? "Leader" : "Student"}
                         </div>
+                        {current?.staff && <div style={{ ...S.badge, ...S.staffBadge }}>Staff</div>}
                         {current?.group && (
-                          <div style={{ ...S.badge, ...(current.group === "hs" ? S.hsBadge : S.msBadge) }}>
-                            {current.group.toUpperCase()}
+                          <div style={{ ...S.badge, ...(current.group === "ms" ? S.msBadge : S.hsBadge) }}>
+                            {groupLabel(current.group)}
                           </div>
                         )}
                         {current?.type === "student" && current?.grade && (
@@ -2586,11 +2847,11 @@ function AppMain({ settings, role, onStatus }) {
                             {ordinal(current.grade)} Gr
                           </div>
                         )}
-                        {groupName(current?.smallGroupId) && (
-                          <div style={{ ...S.badge, ...S.sgBadge }}>
-                            <Users size={11} style={{ marginRight: 5 }} />{groupName(current.smallGroupId)}
+                        {sgIds(current).map(id => groupName(id) && (
+                          <div key={id} style={{ ...S.badge, ...S.sgBadge }}>
+                            <Users size={11} style={{ marginRight: 5 }} />{groupName(id)}
                           </div>
-                        )}
+                        ))}
                       </div>
 
                       {/* Name — primary */}
@@ -2629,6 +2890,25 @@ function AppMain({ settings, role, onStatus }) {
                               <span style={S.reqDot}>◆</span>
                               <span style={S.reqText}>{req}</span>
                               <button onClick={() => removeRequest(current.id, i)} style={S.reqRemove}><X size={11} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {(current?.familyRequests || []).length > 0 && (
+                        <div style={S.familyBox}>
+                          <p style={{ ...S.reqLabel, color:"#b49ad0" }}>From their family</p>
+                          {current.familyRequests.map(f => (
+                            <div key={f.id} style={{ ...S.reqItem, alignItems:"flex-start" }}>
+                              <span style={{ ...S.reqDot, color:"#b49ad0" }}>◆</span>
+                              <span style={{ flex:1, minWidth:0 }}>
+                                <span style={S.reqText}>{f.text}</span>
+                                <span style={{ display:"block", fontSize:11.5, color:C.muted, marginTop:3 }}>
+                                  {f.from} · {timeAgo(f.at)}
+                                  {f.dontMention && <span style={{ color:C.orange, fontWeight:600 }}> · Don’t mention to student</span>}
+                                </span>
+                              </span>
+                              <button onClick={() => setPeople(prev => prev.map(p => p.id === current.id ? { ...p, familyRequests: (p.familyRequests || []).filter(x => x.id !== f.id), updatedAt: Date.now() } : p))} style={S.reqRemove} title="Remove"><X size={11} /></button>
                             </div>
                           ))}
                         </div>
@@ -2743,8 +3023,8 @@ function AppMain({ settings, role, onStatus }) {
                                 <span>{p.name}</span>
                                 <span style={S.ddItemMeta}>
                                   {withinWeek(p.prayedAt) ? "✓ prayed" : ""}
-                                  {p.group ? ` ${p.group.toUpperCase()}` : ""}
-                                  {groupName(p.smallGroupId) ? ` · ${groupName(p.smallGroupId)}` : ""}
+                                  {p.group ? ` ${groupLabel(p.group)}` : ""}
+                                  {sgIds(p).map(groupName).filter(Boolean).length ? ` · ${sgIds(p).map(groupName).filter(Boolean).join(", ")}` : ""}
                                 </span>
                               </button>
                             ))}
@@ -2781,7 +3061,7 @@ function AppMain({ settings, role, onStatus }) {
                     <div style={{ ...S.weekMeta, display:"flex", alignItems:"center", gap:4 }}>{diff === 0 && <Cake size={11} color={C.accent} />}{diff === 0 ? "Today!" : diff === 1 ? "Tomorrow" : date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
-                    {person.group && <span style={{ ...S.badgeSm, ...(person.group === "hs" ? S.hsBadgeSm : S.msBadgeSm) }}>{person.group.toUpperCase()}</span>}
+                    {person.group && <span style={{ ...S.badgeSm, ...(person.group === "ms" ? S.msBadgeSm : S.hsBadgeSm) }}>{groupLabel(person.group)}</span>}
                     <span style={{ ...S.badgeSm, ...(person.type === "leader" ? S.leaderBadgeSm : S.studentBadgeSm) }}>{person.type}</span>
                   </div>
                 </div>
@@ -2828,7 +3108,7 @@ function AppMain({ settings, role, onStatus }) {
                   {p.prayedAt && <div style={S.weekMeta}>Last: {timeAgo(p.prayedAt)}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
-                  {p.group && <span style={{ ...S.badgeSm, ...(p.group === "hs" ? S.hsBadgeSm : S.msBadgeSm) }}>{p.group.toUpperCase()}</span>}
+                  {p.staff && <span style={{ ...S.badgeSm, ...S.staffBadgeSm }}>staff</span>}{p.group && <span style={{ ...S.badgeSm, ...(p.group === "ms" ? S.msBadgeSm : S.hsBadgeSm) }}>{groupLabel(p.group)}</span>}
                   <span style={{ ...S.badgeSm, ...(p.type === "leader" ? S.leaderBadgeSm : S.studentBadgeSm) }}>{p.type}</span>
                 </div>
               </div>
@@ -2878,7 +3158,7 @@ function AppMain({ settings, role, onStatus }) {
               <p style={{ margin:0, fontSize:12, color:C.muted, lineHeight:1.5 }}>Create your small groups, then assign each student and leader below. Groups show up in the Pray and Roster filters.</p>
             )}
             {smallGroups.map(g => {
-              const members = activePeople.filter(p => p.smallGroupId === g.id);
+              const members = activePeople.filter(p => inSG(p, g.id));
               return (
                 <div key={g.id} style={S.sgRow}>
                   {editGroupFor === g.id ? (
@@ -2913,14 +3193,14 @@ function AppMain({ settings, role, onStatus }) {
           </div>
 
           <div style={S.statRow}>
-            {[[`${activePeople.length}`, "total"], [`${activePeople.filter(p => p.group === "hs").length}`, "HS"], [`${activePeople.filter(p => p.group === "ms").length}`, "MS"], [`${prayedCount}`, "prayed ✓"]].map(([n, l]) => (
+            {[[`${activePeople.length}`, "total"], [`${activePeople.filter(inHS).length}`, "HS"], [`${activePeople.filter(inMS).length}`, "MS"], [`${prayedCount}`, "prayed ✓"]].map(([n, l]) => (
               <div key={l} style={S.statChip}><span style={S.statNum}>{n}</span><span style={S.statLbl}>{l}</span></div>
             ))}
           </div>
 
           {/* Type filter */}
           <div style={{ display:"flex", gap:16, justifyContent:"center", marginBottom:6 }}>
-            {[["all","All"],["student","Students"],["leader","Leaders"]].map(([val, label]) => (
+            {[["all","All"],["student","Students"],["leader","Leaders"],["staff","Staff"]].map(([val, label]) => (
               <button key={val} onClick={() => setPeopleTypeFilter(val)} style={{ background:"none", border:"none", borderBottom: peopleTypeFilter === val ? `2px solid ${C.accent}` : "2px solid transparent", color: peopleTypeFilter === val ? C.cream : C.muted, fontSize:13, fontWeight: peopleTypeFilter === val ? 500 : 400, padding:"2px 0", cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
                 {label}
               </button>
@@ -2944,10 +3224,10 @@ function AppMain({ settings, role, onStatus }) {
           </div>
 
           <div style={S.personList}>
-            {activePeople.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) && (peopleTypeFilter === "all" || p.type === peopleTypeFilter) && (peopleGroupFilter === "all" || (peopleGroupFilter === "none" ? !groupName(p.smallGroupId) : p.smallGroupId === peopleGroupFilter))).slice().sort((a, b) => {
+            {activePeople.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) && (peopleTypeFilter === "all" || (peopleTypeFilter === "staff" ? !!p.staff : p.type === peopleTypeFilter)) && (peopleGroupFilter === "all" || (peopleGroupFilter === "none" ? !sgIds(p).some(groupName) : inSG(p, peopleGroupFilter)))).slice().sort((a, b) => {
               if (peopleSort === "group") {
-                const ga = a.group === "ms" ? 0 : a.group === "hs" ? 1 : 2;
-                const gb = b.group === "ms" ? 0 : b.group === "hs" ? 1 : 2;
+                const ga = a.group === "ms" ? 0 : a.group === "both" ? 1 : a.group === "hs" ? 2 : 3;
+                const gb = b.group === "ms" ? 0 : b.group === "both" ? 1 : b.group === "hs" ? 2 : 3;
                 return ga !== gb ? ga - gb : a.name.localeCompare(b.name);
               }
               if (peopleSort === "grade") {
@@ -2991,20 +3271,21 @@ function AppMain({ settings, role, onStatus }) {
                     )}
                     <div style={S.personMeta}>
                       <span style={{ ...S.badgeSm, ...(p.type === "leader" ? S.leaderBadgeSm : S.studentBadgeSm) }}>{p.type}</span>
-                      {p.group && <span style={{ ...S.badgeSm, ...(p.group === "hs" ? S.hsBadgeSm : S.msBadgeSm) }}>{p.group.toUpperCase()}</span>}
+                      {p.staff && <span style={{ ...S.badgeSm, ...S.staffBadgeSm }}>staff</span>}{p.group && <span style={{ ...S.badgeSm, ...(p.group === "ms" ? S.msBadgeSm : S.hsBadgeSm) }}>{groupLabel(p.group)}</span>}
                       {p.type === "student" && p.grade && <span style={S.gradeBadge}>{ordinal(p.grade)} Gr</span>}
                       {withinWeek(p.prayedAt) && <span style={S.prayedSmall}>✓ prayed</span>}
                       {(p.prayerRequests || []).length > 0 && <span style={S.reqCountBadge}>{p.prayerRequests.length} req</span>}
                       {p.birthday && <span style={S.bdayBadgeSm}><Cake size={9} style={{ marginRight: 3 }} />{formatBirthday(p.birthday)}</span>}
                       {(p.causeCircle || []).length > 0 && <span style={S.reqCountBadge}>{p.causeCircle.length} CAUSE</span>}
+                      {(p.familyRequests || []).length > 0 && <span style={{ ...S.reqCountBadge, color: "#b49ad0" }}>{p.familyRequests.length} family</span>}
                       {(p.gospelLog || []).length > 0 && <span style={{ ...S.reqCountBadge, color: C.orange }}>{p.gospelLog.reduce((n, g) => n + (g.count || 0), 0)} Gospel</span>}
                     </div>
                   </div>
                   <div style={S.personActions}>
                     <button onClick={() => { setEditBdayFor(editBdayFor === p.id ? null : p.id); setBdayInput(p.birthday || ""); setEditNameFor(null); }}
                       style={{ ...S.iconBtn, color: p.birthday ? C.accent : C.muted }} title="Set birthday"><Cake size={13} /></button>
-                    <button onClick={() => cycleGroup(p.id)} style={{ ...S.iconBtn, color: p.group === "hs" ? "#8ea3e3" : p.group === "ms" ? "#7fd06c" : C.muted }} title="Cycle HS/MS/none">
-                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.02em" }}>{p.group ? p.group.toUpperCase() : "—"}</span>
+                    <button onClick={() => cycleGroup(p.id)} style={{ ...S.iconBtn, width: p.group === "both" ? 44 : 30, color: p.group === "hs" ? "#8ea3e3" : p.group === "ms" ? "#7fd06c" : p.group === "both" ? C.cream : C.muted }} title={p.type === "leader" ? "Cycle HS / MS / MS & HS / none" : "Cycle HS / MS / none"}>
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.02em" }}>{p.group === "both" ? "MS+HS" : p.group ? p.group.toUpperCase() : "—"}</span>
                     </button>
                     <button onClick={() => toggleType(p.id)} style={S.iconBtn} title="Toggle role"><RefreshCw size={13} /></button>
                     <button onClick={() => deactivate(p.id)} style={{ ...S.iconBtn, color: C.muted }} title="Make inactive"><Trash2 size={13} /></button>
@@ -3030,16 +3311,32 @@ function AppMain({ settings, role, onStatus }) {
                     </select>
                   </div>
                 )}
-                {(smallGroups.length > 0 || p.photo) && (
+                {p.type === "leader" && (
                   <div style={S.gradeRow}>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer" }}>
+                      <input type="checkbox" checked={!!p.staff} onChange={() => toggleStaff(p.id)} style={{ accentColor:C.accent, width:15, height:15 }} />
+                      Staff member
+                    </label>
+                    <span style={{ fontSize:11.5, color:C.muted }}>Shows a Staff badge</span>
+                  </div>
+                )}
+                {(smallGroups.length > 0 || p.photo) && (
+                  <div style={{ ...S.gradeRow, alignItems:"flex-start" }}>
                     {smallGroups.length > 0 && (
-                      <>
-                        <span style={S.gradeLabel}>Small group</span>
-                        <select value={groupName(p.smallGroupId) ? p.smallGroupId : ""} onChange={e => assignSmallGroup(p.id, e.target.value)} style={{ ...S.gradeSelect, flex:1, minWidth:0 }}>
-                          <option value="">—</option>
-                          {smallGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                        </select>
-                      </>
+                      <div style={{ display:"flex", flexDirection:"column", gap:6, flex:1, minWidth:0 }}>
+                        <span style={S.gradeLabel}>Small groups</span>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+                          {smallGroups.map(g => {
+                            const on = inSG(p, g.id);
+                            return (
+                              <button key={g.id} onClick={() => assignSmallGroup(p.id, g.id)} aria-pressed={on}
+                                style={{ padding:"4px 9px", borderRadius:14, fontSize:12, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", border:`1px solid ${on ? "#b49ad0" : C.border}`, background: on ? "#2a2433" : "none", color: on ? "#d6c4ea" : C.muted }}>
+                                {on ? "✓ " : ""}{g.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     )}
                     {p.photo && (
                       <button onClick={() => removePhoto(p.id)} style={{ background:"none", border:"none", color:C.muted, fontSize:11, cursor:"pointer", marginLeft:"auto", fontFamily:"'Inter', system-ui, sans-serif", flexShrink:0 }}>Remove photo</button>
@@ -3105,7 +3402,7 @@ function AppMain({ settings, role, onStatus }) {
         <div style={S.importWrap}>
           {/* Group filter */}
           <div style={{ display:"flex", gap:0, marginBottom:12, borderRadius:10, overflow:"hidden", border:`1px solid ${C.border}` }}>
-            {[["all","All"],["ms","MS"],["hs","HS"],["leader","Leaders"]].map(([val, label]) => (
+            {[["all","All"],["ms","MS"],["hs","HS"],["leader","Leaders"],...(people.some(p => p.staff && p.active !== false) ? [["staff","Staff"]] : [])].map(([val, label]) => (
               <button key={val} onClick={() => setRosterGroup(val)} style={{ flex:1, background: rosterGroup === val ? C.accent : C.surface, border:"none", color: rosterGroup === val ? "#fff" : C.muted, padding:"9px 0", fontSize:13, fontWeight: rosterGroup === val ? 600 : 400, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", transition:"background 0.15s" }}>
                 {label}
               </button>
@@ -3131,7 +3428,7 @@ function AppMain({ settings, role, onStatus }) {
           {/* People list */}
           <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
             {activePeople
-              .filter(p => (rosterGroup === "all" ? true : rosterGroup === "leader" ? p.type === "leader" : p.group === rosterGroup && p.type === "student") && (rosterSmallGroup === "all" || p.smallGroupId === rosterSmallGroup))
+              .filter(p => (rosterGroup === "all" ? true : rosterGroup === "leader" ? p.type === "leader" : rosterGroup === "staff" ? !!p.staff : p.type === "student" && (rosterGroup === "hs" ? inHS(p) : inMS(p))) && (rosterSmallGroup === "all" || inSG(p, rosterSmallGroup)))
               .slice().sort((a, b) => {
                 if (rosterSort === "grade") {
                   const ga = Number(a.grade) || 99;
@@ -3172,19 +3469,20 @@ function AppMain({ settings, role, onStatus }) {
                           <span style={{ fontSize:13, color:C.muted, fontWeight:600 }}>{ordinal(p.grade)} Grade</span>
                         )}
                         {p.type === "leader" && p.group && (
-                          <span style={{ fontSize:13, color:C.muted, fontWeight:600 }}>{p.group.toUpperCase()}</span>
+                          <span style={{ fontSize:13, color:C.muted, fontWeight:600 }}>{groupLabel(p.group)}</span>
                         )}
                         {bdayFmt && <span style={{ fontSize:13, color:C.muted, display:"flex", alignItems:"center", gap:3 }}><Cake size={12} />{bdayFmt}</span>}
-                        {groupName(p.smallGroupId) && <span style={{ fontSize:13, color:C.muted, display:"flex", alignItems:"center", gap:3 }}><Users size={12} />{groupName(p.smallGroupId)}</span>}
+                        {p.staff && <span style={{ fontSize:12, color:"#e6b34a", fontWeight:600 }}>Staff</span>}
+                        {sgIds(p).map(groupName).filter(Boolean).length > 0 && <span style={{ fontSize:13, color:C.muted, display:"flex", alignItems:"center", gap:3 }}><Users size={12} />{sgIds(p).map(groupName).filter(Boolean).join(", ")}</span>}
                       </div>
                     </div>
                     {/* Group badge */}
-                    {p.group && <span style={{ fontSize:10, fontWeight:600, color: p.group === "hs" ? "#8ea3e3" : C.accent, background: p.group === "hs" ? C.studentBg : C.accentBg, borderRadius:6, padding:"2px 7px", flexShrink:0 }}>{p.group.toUpperCase()}</span>}
+                    {p.group && <span style={{ fontSize:10, fontWeight:600, color: p.group === "ms" ? C.accent : "#8ea3e3", background: p.group === "ms" ? C.accentBg : C.studentBg, borderRadius:6, padding:"2px 7px", flexShrink:0, whiteSpace:"nowrap" }}>{groupLabel(p.group)}</span>}
                   </div>
                 );
               })
             }
-            {activePeople.filter(p => (rosterGroup === "all" ? true : rosterGroup === "leader" ? p.type === "leader" : p.group === rosterGroup && p.type === "student") && (rosterSmallGroup === "all" || p.smallGroupId === rosterSmallGroup)).length === 0 && (
+            {activePeople.filter(p => (rosterGroup === "all" ? true : rosterGroup === "leader" ? p.type === "leader" : rosterGroup === "staff" ? !!p.staff : p.type === "student" && (rosterGroup === "hs" ? inHS(p) : inMS(p))) && (rosterSmallGroup === "all" || inSG(p, rosterSmallGroup))).length === 0 && (
               <p style={{ textAlign:"center", color:C.muted, fontSize:13, padding:"32px 0" }}>No one in this group yet.</p>
             )}
           </div>
@@ -3194,7 +3492,7 @@ function AppMain({ settings, role, onStatus }) {
 
       {/* ─── INBOX ─── */}
       {view === "inbox" && adminAuthed && (
-        <InboxView items={submissions} people={people} setPeople={setPeople} onRemove={removeSubmissions} studentCodeSet={!!settings.studentCodeSet} />
+        <InboxView items={submissions} people={people} setPeople={setPeople} onRemove={removeSubmissions} studentCodeSet={!!settings.studentCodeSet} parentCodeSet={!!settings.parentCodeSet} />
       )}
 
       {/* ─── REPORT ─── */}
@@ -3240,8 +3538,8 @@ function AppMain({ settings, role, onStatus }) {
           {smallGroups.length > 0 && (
             <div style={{ ...S.reportBox, marginTop:14 }}>
               <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}><Users size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>This Week by Small Group</p></div>
-              {[...smallGroups.map(g => ({ key:g.id, name:g.name, list: activePeople.filter(p => p.smallGroupId === g.id) })),
-                { key:"none", name:"Not in a small group", list: activePeople.filter(p => !groupName(p.smallGroupId)) }]
+              {[...smallGroups.map(g => ({ key:g.id, name:g.name, list: activePeople.filter(p => inSG(p, g.id)) })),
+                { key:"none", name:"Not in a small group", list: activePeople.filter(p => !sgIds(p).some(groupName)) }]
                 .filter(row => row.key !== "none" || row.list.length > 0)
                 .map(row => {
                   const done = row.list.filter(p => withinWeek(p.prayedAt)).length;
@@ -3470,6 +3768,9 @@ const S = {
   cardPhotoWrap: { alignSelf: "center", background: "#f3eee6", padding: "7px 7px 20px", borderRadius: 4, boxShadow: "0 6px 18px rgba(0,0,0,0.45)", marginBottom: 18 },
   cardPhoto: { width: 132, height: 132, objectFit: "cover", display: "block", borderRadius: 2, background: C.faint, pointerEvents: "none" },
   sgBadge: { background: "#2a2433", color: "#b49ad0", display: "inline-flex", alignItems: "center", textTransform: "none", letterSpacing: "0.02em" },
+  staffBadge: { background: "#2b2414", color: "#e6b34a", border: "1px solid #e6b34a33", marginBottom: 0 },
+  staffBadgeSm: { background: "#2b2414", color: "#e6b34a" },
+  familyBox: { background: "#221e29", border: "1px solid #b49ad033", borderRadius: 10, padding: "12px 14px", marginBottom: 14 },
   gospelBox: { background: "#2a1a12", border: `1px solid ${C.orange}40`, borderRadius: 10, padding: "12px 14px", marginTop: 12 },
   causeBox: { background: C.accentBg, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "12px 14px", marginTop: 12 },
   causeHead: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 8 },
