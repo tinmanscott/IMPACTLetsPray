@@ -109,6 +109,25 @@ async function enablePush(time) {
   return data;
 }
 
+// Students: subscribe this device so they hear when someone prays for them
+const STUDENT_NOTIFY_KEY = "lp-student-notify";
+async function enableStudentPush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error(perm === "denied" ? "Notifications are blocked for this site. Turn them on in your phone’s settings to use this." : "Notifications weren’t allowed.");
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  await navigator.serviceWorker.ready;
+  const keyRes = await fetch("/api/push");
+  if (!keyRes.ok) throw new Error("Couldn’t reach the server.");
+  const { publicKey } = await keyRes.json();
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+  const res = await fetch("/api/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON() }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || "Couldn’t turn on notifications.");
+  lsSet(STUDENT_NOTIFY_KEY, data.id);
+  return data.id;
+}
+
 async function disablePush() {
   const id = lsGet(PUSH_ID_KEY);
   try {
@@ -187,18 +206,25 @@ function photoUrl(p) {
 }
 
 // Shrink to a centered square JPEG so uploads are small and cards look consistent
-function resizeImage(file, size = 500) {
+// square = true crops to a centered square (profile photos); false keeps the shape (series artwork)
+function resizeImage(file, size = 500, square = true) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const side = Math.min(img.naturalWidth, img.naturalHeight);
-      const sx = (img.naturalWidth - side) / 2;
-      const sy = (img.naturalHeight - side) / 2;
-      const out = Math.min(size, side);
       const canvas = document.createElement("canvas");
-      canvas.width = out; canvas.height = out;
-      canvas.getContext("2d").drawImage(img, sx, sy, side, side, 0, 0, out, out);
+      if (square) {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = (img.naturalWidth - side) / 2;
+        const sy = (img.naturalHeight - side) / 2;
+        const out = Math.min(size, side);
+        canvas.width = out; canvas.height = out;
+        canvas.getContext("2d").drawImage(img, sx, sy, side, side, 0, 0, out, out);
+      } else {
+        const scale = Math.min(1, size / Math.max(img.naturalWidth, img.naturalHeight));
+        canvas.width = Math.round(img.naturalWidth * scale); canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      }
       URL.revokeObjectURL(url);
       canvas.toBlob(b => b ? resolve(b) : reject(new Error("Could not read image")), "image/jpeg", 0.82);
     };
@@ -270,8 +296,9 @@ const inMS = p => p.group === "ms" || p.group === "both";
 const groupLabel = g => g === "both" ? "MS & HS" : g ? g.toUpperCase() : "";
 
 // One place for every roster filter, including small groups ("sg:<id>")
-function matchesFilter(p, f) {
+function matchesFilter(p, f, events) {
   if (!f || f === "all") return true;
+  if (f.startsWith("ev:")) { const ev = (events || []).find(e => e.id === f.slice(3)); return !!ev && (ev.attendees || []).includes(p.id); }
   if (f.startsWith("sg:")) return inSG(p, f.slice(3));
   if (f === "students") return p.type === "student";
   if (f === "leaders") return p.type === "leader";
@@ -572,7 +599,7 @@ function Confetti() {
     delay: Math.random() * 2.5,
     duration: 2.8 + Math.random() * 2,
     size: 7 + Math.random() * 8,
-    color: ["#5aba47","#7fd06c","#7b93db","#80848a","#3f8a32","#7fd06c","#7b93db"][i % 7],
+    color: ["#4cad3b","#74c464","#7b93db","#80848a","#3f8a32","#74c464","#7b93db"][i % 7],
     rotate: Math.random() * 360,
   }));
   return (
@@ -655,13 +682,13 @@ function AllPrayedScreen({ prayedCount, praySessionCount, total, onWeek, onKeepP
       {show && <Confetti />}
       <div style={{ animation:"celebPulse 2s ease-in-out infinite", lineHeight:1 }}>
         <svg width="64" height="64" viewBox="0 0 20 20">
-          <path d="M10,2 L11.768,8.232 L18,10 L11.768,11.768 L10,18 L8.232,11.768 L2,10 L8.232,8.232 Z" fill="#5aba47" />
+          <path d="M10,2 L11.768,8.232 L18,10 L11.768,11.768 L10,18 L8.232,11.768 L2,10 L8.232,8.232 Z" fill="#4cad3b" />
         </svg>
       </div>
       <h2 style={{ fontFamily:"'Montserrat', system-ui, sans-serif", fontSize:34, fontWeight:400, color:"#f2f1ee", margin:0, lineHeight:1.2 }}>
         Everyone's been<br/>prayed for!
       </h2>
-      <p style={{ fontSize:14, color:"#5aba47", margin:0, fontWeight:500 }}>
+      <p style={{ fontSize:14, color:"#4cad3b", margin:0, fontWeight:500 }}>
         {praySessionCount > prayedCount ? praySessionCount : prayedCount} of {total} this week
       </p>
       {isMonday ? (
@@ -674,7 +701,7 @@ function AllPrayedScreen({ prayedCount, praySessionCount, total, onWeek, onKeepP
           <CountdownTicker targetTs={nextMonday} />
         </div>
       )}
-      <button onClick={() => onKeepPraying()} style={{ background:C.accent, border:"none", color:C.bg, borderRadius:12, padding:"13px 28px", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", boxShadow:"0 4px 20px rgba(90,186,71,0.3)" }}>
+      <button onClick={() => onKeepPraying()} style={{ background:C.accent, border:"none", color:C.bg, borderRadius:12, padding:"13px 28px", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", boxShadow:"0 4px 20px rgba(76,173,59,0.3)" }}>
         Keep Praying
       </button>
       <button onClick={onWeek} style={{ background:"none", border:"1px solid #34363a", color:"#80848a", borderRadius:10, padding:"10px 20px", fontSize:13, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
@@ -687,7 +714,7 @@ function AllPrayedScreen({ prayedCount, praySessionCount, total, onWeek, onKeepP
 
 const authInp = { width:"100%", boxSizing:"border-box", background:"#1f2023", border:"1px solid #34363a", borderRadius:10, color:"#f2f1ee", padding:"12px 14px", fontSize:15, fontFamily:"'Inter', system-ui, sans-serif", outline:"none" };
 const authLbl = { fontSize:11, color:"#80848a", textTransform:"uppercase", letterSpacing:"0.06em", fontWeight:600, display:"block", marginBottom:5 };
-const authBtn = { background:"#5aba47", border:"none", color:"#fff", borderRadius:12, padding:"14px 0", fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", marginTop:4 };
+const authBtn = { background:"#4cad3b", border:"none", color:"#101112", borderRadius:12, padding:"14px 0", fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", marginTop:4 };
 const authWrap = { minHeight:"100vh", background:"#161719", fontFamily:"'Inter', system-ui, sans-serif", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"32px 24px", boxSizing:"border-box" };
 
 function SetupScreen({ onComplete }) {
@@ -746,7 +773,7 @@ function LockScreen({ status, onSignedIn }) {
   return (
     <div style={authWrap}>
       <img src="/logo.png" alt={status.name || ""} style={{ width: 220, height: "auto", marginBottom: 14 }} />
-      {status.sub && <p style={{ fontSize:13, color:"#80848a", margin:"0 0 6px", textTransform:"uppercase", letterSpacing:"0.12em", fontWeight:600 }}>{status.sub}</p>}
+      <AppWordmark />
       <p style={{ fontSize:14, color:"#80848a", margin:"14px 0 24px", textAlign:"center", maxWidth:300, lineHeight:1.5 }}>
         {status.teamCodeSet ? "Enter your team code to start praying." : "Your admin needs to finish setup. Admins: sign in with your admin password."}
       </p>
@@ -759,8 +786,8 @@ function LockScreen({ status, onSignedIn }) {
       <p style={{ fontSize:12, color:"#5c6066", marginTop:28, textAlign:"center", maxWidth:300, lineHeight:1.5 }}>Ask your student ministry leader if you don’t have the code.</p>
       {(status.studentCodeSet || status.parentCodeSet) && (
         <p style={{ fontSize:12.5, color:"#80848a", marginTop:6, textAlign:"center", maxWidth:320, lineHeight:1.6 }}>
-          {status.studentCodeSet && <>Students: <a href="/submit" style={{ color:"#7fd06c" }}>share a prayer request</a><br /></>}
-          {status.parentCodeSet && <>Parents: <a href="/parents" style={{ color:"#7fd06c" }}>share a prayer request for your family</a></>}
+          {status.studentCodeSet && <>Students: <a href="/submit" style={{ color:"#74c464" }}>share a prayer request</a><br /></>}
+          {status.parentCodeSet && <>Parents: <a href="/parents" style={{ color:"#74c464" }}>share a prayer request for your family</a></>}
         </p>
       )}
     </div>
@@ -836,7 +863,7 @@ function ReminderCard() {
             <button onClick={turnOff} disabled={busy} style={{ ...S.cancelBtn, marginLeft:"auto" }}>Turn off</button>
           </>
         ) : (
-          <button onClick={() => turnOn()} disabled={busy} style={{ ...S.confirmBtn, background: C.orange }}>{busy ? "Turning on…" : "Turn on"}</button>
+          <button onClick={() => turnOn()} disabled={busy} style={{ ...S.confirmBtn, background: C.orange, color: "#fff" }}>{busy ? "Turning on…" : "Turn on"}</button>
         )}
       </div>
       {msg && <p style={{ margin:"10px 0 0", fontSize:12, color: /on\.|sent/.test(msg) ? C.accentLight : "#e07a5f" }}>{msg}</p>}
@@ -944,7 +971,7 @@ function LoadingScreen() {
   return (
     <div style={{ minHeight:"100vh", background:"#161719", display:"flex", alignItems:"center", justifyContent:"center" }}>
       <svg width="36" height="36" viewBox="0 0 20 20" style={{ opacity:0.5 }}>
-        <path d="M10,2 L11.768,8.232 L18,10 L11.768,11.768 L10,18 L8.232,11.768 L2,10 L8.232,8.232 Z" fill="#5aba47" />
+        <path d="M10,2 L11.768,8.232 L18,10 L11.768,11.768 L10,18 L8.232,11.768 L2,10 L8.232,8.232 Z" fill="#4cad3b" />
       </svg>
     </div>
   );
@@ -964,6 +991,16 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+/* The Let’s Pray name + mark, shown under the IMPACT logo on sign-in screens */
+function AppWordmark({ small }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, margin: small ? "0 0 4px" : "2px 0 4px" }}>
+      <img src="/icon-192.png" alt="" style={{ width: small ? 22 : 28, height: small ? 22 : 28, borderRadius: small ? 6 : 8 }} />
+      <span style={{ fontFamily:"'Montserrat', system-ui, sans-serif", fontSize: small ? 16 : 20, fontWeight:800, color:"#f2f1ee", letterSpacing:"0.01em" }}>Let’s Pray</span>
+    </div>
+  );
+}
+
 /* ── Student page (/submit) ── */
 const STUDENT_NAME_KEY = "lp-student-name";
 const STUDENT_GRADE_KEY = "lp-student-grade";
@@ -973,6 +1010,8 @@ const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 export function StudentPage() {
   const [info, setInfo] = React.useState(null);
+  const [series] = useSeries(info && info.role);
+  const [events] = useEvents(info && info.role);
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -993,6 +1032,15 @@ export function StudentPage() {
   const [gFriend, setGFriend] = React.useState("");
   const [gOutcome, setGOutcome] = React.useState("");
   const [lastKind, setLastKind] = React.useState("");
+  const [notifyId, setNotifyId] = React.useState(() => lsGet(STUDENT_NOTIFY_KEY) || "");
+  const [notifyBusy, setNotifyBusy] = React.useState(false);
+  const [notifyMsg, setNotifyMsg] = React.useState("");
+  async function turnOnNotify() {
+    setNotifyBusy(true); setNotifyMsg("");
+    try { setNotifyId(await enableStudentPush()); setNotifyMsg("You’ll get a notification when someone prays for you."); }
+    catch (e) { setNotifyMsg(e.message || "Couldn’t turn on notifications."); }
+    setNotifyBusy(false);
+  }
   const [photoBusyS, setPhotoBusyS] = React.useState(false);
   const studentPhotoRef = React.useRef(null);
 
@@ -1025,13 +1073,14 @@ export function StudentPage() {
     if (name.trim().length < 2) return setErr("Please enter your first and last name.");
     if (kind === "request" && text.trim().length < 3) return setErr("Please write your prayer request.");
     if (kind === "gospel" && (!gCount || gCount < 1)) return setErr("How many Gospel conversations did you have?");
+    if (kind === "praise" && text.trim().length < 3) return setErr("Tell us what God did!");
     if (kind === "cause" && !list.length) return setErr("Add at least one friend’s name.");
     if ((bMonth && !bDay) || (!bMonth && bDay)) return setErr("Pick both the month and day of your birthday.");
     const birthday = bMonth && bDay ? `${bMonth}-${bDay}` : "";
     if (kind === "info" && !grade && !birthday && !photoData) return setErr("Add your grade, birthday, or a photo.");
     setBusy(true);
     try {
-      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: kind === "request" && share, anonymous: kind === "request" && share && anonymous, photo: photoData || undefined, count: kind === "gospel" ? gCount : undefined, friend: kind === "gospel" ? gFriend.trim() : undefined, outcome: kind === "gospel" ? (gOutcome || undefined) : undefined }) });
+      const res = await fetch("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), kind, text: text.trim(), friends: list, grade: grade ? Number(grade) : null, birthday, share: (kind === "request" || kind === "praise") && share, anonymous: (kind === "request" || kind === "praise") && share && anonymous, notifyId: notifyId || undefined, photo: photoData || undefined, count: kind === "gospel" ? gCount : undefined, friend: kind === "gospel" ? gFriend.trim() : undefined, outcome: kind === "gospel" ? (gOutcome || undefined) : undefined }) });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) { load(); throw new Error("Please enter the student code again."); }
       if (!res.ok) throw new Error(data.error || "That didn’t send. Try again.");
@@ -1049,6 +1098,7 @@ export function StudentPage() {
   const header = (
     <>
       <img src="/logo.png" alt={info?.name || ""} style={{ width: 210, height: "auto", marginBottom: 10 }} />
+      <AppWordmark small />
       <p style={{ fontSize:12, color:"#80848a", margin:"0 0 24px", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>Share with your leaders</p>
     </>
   );
@@ -1075,13 +1125,13 @@ export function StudentPage() {
       {header}
       <div style={{ ...card, alignItems:"center", textAlign:"center" }}>
         <Heart size={40} color="#e95e24" fill="#e95e24" />
-        <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>{lastKind === "gospel" ? "Thank you for sharing Jesus!" : "Got it. Thank you!"}</p>
+        <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>{lastKind === "gospel" ? "Thank you for sharing Jesus!" : lastKind === "praise" ? "Praise God! 🎉" : "Got it. Thank you!"}</p>
         <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>
           {lastKind === "gospel" ? "Your leaders will celebrate this with you and keep praying for your friend." : "Your leaders will see this and start praying."}{sharedLast ? " Once a leader approves it, it will show on the Prayer Wall too." : ""}
         </p>
         {lastKind === "gospel" && <div style={{ width:"100%", marginTop:8, textAlign:"left" }}><GospelTracker compact /></div>}
         <button onClick={() => { setDone(false); setKind(lastKind === "gospel" ? "gospel" : "request"); }} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share something else</button>
-        <button onClick={() => { setDone(false); setTab("wall"); }} style={{ background:"none", border:"none", color:"#7fd06c", fontSize:14, fontWeight:600, cursor:"pointer", marginTop:4 }}>Go to the Prayer Wall →</button>
+        <button onClick={() => { setDone(false); setTab("wall"); }} style={{ background:"none", border:"none", color:"#74c464", fontSize:14, fontWeight:600, cursor:"pointer", marginTop:4 }}>Go to the Prayer Wall →</button>
       </div>
     </div>
   );
@@ -1089,7 +1139,7 @@ export function StudentPage() {
   const tabsRow = (
     <div style={{ display:"flex", width:"100%", maxWidth:400, background:"#1f2023", border:"1px solid #34363a", borderRadius:12, padding:4, gap:4, marginBottom:18, boxSizing:"border-box" }}>
       {[["share","Share"],["wall","Prayer Wall"]].map(([v, l]) => (
-        <button key={v} onClick={() => setTab(v)} style={{ flex:1, padding:"10px 0", borderRadius:9, border:"none", background: tab === v ? "#5aba47" : "none", color: tab === v ? "#fff" : "#80848a", fontWeight: tab === v ? 700 : 500, fontSize:14, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
+        <button key={v} onClick={() => setTab(v)} style={{ flex:1, padding:"10px 0", borderRadius:9, border:"none", background: tab === v ? "#4cad3b" : "none", color: tab === v ? "#101112" : "#80848a", fontWeight: tab === v ? 700 : 500, fontSize:14, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
       ))}
     </div>
   );
@@ -1098,15 +1148,19 @@ export function StudentPage() {
     <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
       {header}
       {tabsRow}
+      <SeriesCard series={series} mode="student" />
+      <EventCards events={events} mode="student" />
       <PrayerWall />
     </div>
   );
 
-  const chip = on => ({ flex:1, padding:"11px 2px", borderRadius:10, border:`1px solid ${on ? "#5aba47" : "#34363a"}`, background: on ? "#18241a" : "#1f2023", color: on ? "#f2f1ee" : "#80848a", fontSize:14, fontWeight: on ? 700 : 500, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  const chip = on => ({ flex:1, padding:"11px 2px", borderRadius:10, border:`1px solid ${on ? "#4cad3b" : "#34363a"}`, background: on ? "#18241a" : "#1f2023", color: on ? "#f2f1ee" : "#80848a", fontSize:14, fontWeight: on ? 700 : 500, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
   return (
     <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
       {header}
       {tabsRow}
+      <SeriesCard series={series} mode="student" />
+      <EventCards events={events} mode="student" />
       <div style={card}>
         <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
         <div style={{ display:"flex", gap:8 }}>
@@ -1147,9 +1201,28 @@ export function StudentPage() {
           <button onClick={() => setKind("request")} style={chip(kind === "request")}>Prayer request</button>
           <button onClick={() => setKind("cause")} style={chip(kind === "cause")}>CAUSE Circle</button>
           <button onClick={() => setKind("gospel")} style={chip(kind === "gospel")}>Gospel conversation</button>
+          <button onClick={() => setKind("praise")} style={chip(kind === "praise")}>Praise report 🎉</button>
           <button onClick={() => setKind("info")} style={chip(kind === "info")}>Just my info</button>
         </div>
-        {kind === "gospel" ? (
+        {kind === "praise" ? (
+          <div>
+            <label style={authLbl}>What did God do?</label>
+            <textarea value={text} onChange={e => setText(e.target.value)} rows={4} maxLength={1200} placeholder="Share how God answered a prayer or what He’s doing in your life." style={{ ...authInp, resize:"vertical", lineHeight:1.5 }} />
+            <div style={{ marginTop:10, background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+              <label style={{ display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer", fontSize:14, color:"#f2f1ee", lineHeight:1.4 }}>
+                <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#4cad3b" }} />
+                <span>Share it on the student Prayer Wall<br /><span style={{ fontSize:12, color:"#80848a" }}>So everyone can celebrate with you</span></span>
+              </label>
+              {share && (
+                <div style={{ display:"flex", gap:8, paddingLeft:27 }}>
+                  {[[false, "Show my first name"], [true, "Post anonymously"]].map(([v, l]) => (
+                    <button key={l} onClick={() => setAnonymous(v)} style={{ flex:1, padding:"8px 4px", borderRadius:8, border:`1px solid ${anonymous === v ? "#4cad3b" : "#34363a"}`, background: anonymous === v ? "#18241a" : "none", color: anonymous === v ? "#f2f1ee" : "#80848a", fontSize:12.5, cursor:"pointer" }}>{l}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : kind === "gospel" ? (
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <div>
               <label style={authLbl}>How many Gospel conversations did you have?</label>
@@ -1167,7 +1240,7 @@ export function StudentPage() {
               <label style={authLbl}>How did it go? <span style={{ opacity:0.6, fontWeight:400, textTransform:"none" }}>(optional)</span></label>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                 {GOSPEL_OUTCOMES.map(([v, l]) => (
-                  <button key={v} onClick={() => setGOutcome(o => o === v ? "" : v)} style={{ padding:"8px 12px", borderRadius:18, border:`1px solid ${gOutcome === v ? (v === "trusted" ? "#e95e24" : "#5aba47") : "#34363a"}`, background: gOutcome === v ? (v === "trusted" ? "#2a1a12" : "#18241a") : "none", color: gOutcome === v ? "#f2f1ee" : "#80848a", fontSize:13, cursor:"pointer" }}>{l}</button>
+                  <button key={v} onClick={() => setGOutcome(o => o === v ? "" : v)} style={{ padding:"8px 12px", borderRadius:18, border:`1px solid ${gOutcome === v ? (v === "trusted" ? "#e95e24" : "#4cad3b") : "#34363a"}`, background: gOutcome === v ? (v === "trusted" ? "#2a1a12" : "#18241a") : "none", color: gOutcome === v ? "#f2f1ee" : "#80848a", fontSize:13, cursor:"pointer" }}>{l}</button>
                 ))}
               </div>
             </div>
@@ -1184,13 +1257,13 @@ export function StudentPage() {
             <textarea value={text} onChange={e => setText(e.target.value)} rows={5} maxLength={600} placeholder="Share as much or as little as you want." style={{ ...authInp, resize:"vertical", lineHeight:1.5 }} />
             <div style={{ marginTop:10, background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
               <label style={{ display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer", fontSize:14, color:"#f2f1ee", lineHeight:1.4 }}>
-                <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#5aba47" }} />
+                <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#4cad3b" }} />
                 <span>Also share on the student Prayer Wall<br /><span style={{ fontSize:12, color:"#80848a" }}>So other students can pray for you too</span></span>
               </label>
               {share && (
                 <div style={{ display:"flex", gap:8, paddingLeft:27 }}>
                   {[[false, "Show my first name"], [true, "Post anonymously"]].map(([v, l]) => (
-                    <button key={l} onClick={() => setAnonymous(v)} style={{ flex:1, padding:"8px 4px", borderRadius:8, border:`1px solid ${anonymous === v ? "#5aba47" : "#34363a"}`, background: anonymous === v ? "#18241a" : "none", color: anonymous === v ? "#f2f1ee" : "#80848a", fontSize:12.5, cursor:"pointer" }}>{l}</button>
+                    <button key={l} onClick={() => setAnonymous(v)} style={{ flex:1, padding:"8px 4px", borderRadius:8, border:`1px solid ${anonymous === v ? "#4cad3b" : "#34363a"}`, background: anonymous === v ? "#18241a" : "none", color: anonymous === v ? "#f2f1ee" : "#80848a", fontSize:12.5, cursor:"pointer" }}>{l}</button>
                   ))}
                 </div>
               )}
@@ -1206,8 +1279,19 @@ export function StudentPage() {
             {friends.length < 12 && <button onClick={() => setFriends(prev => [...prev, ""])} style={{ alignSelf:"flex-start", background:"none", border:"1px solid #34363a", color:"#80848a", borderRadius:8, padding:"7px 12px", fontSize:13, cursor:"pointer" }}>+ Another friend</button>}
           </div>
         )}
+        <div style={{ background:"#1f2023", border:"1px solid #34363a", borderRadius:10, padding:"10px 12px", display:"flex", alignItems:"center", gap:10 }}>
+          <Bell size={16} color={notifyId ? "#4cad3b" : "#80848a"} style={{ flexShrink:0 }} />
+          <div style={{ flex:1, minWidth:0, fontSize:13, color:"#f2f1ee", lineHeight:1.4 }}>
+            {notifyId ? "We’ll let you know when someone prays for you." : "Get a notification when someone prays for you"}
+            {!notifyId && isIOS() && !isStandalone() && <span style={{ display:"block", fontSize:11.5, color:"#80848a" }}>On iPhone, first tap Share → Add to Home Screen, then open it from there.</span>}
+            {notifyMsg && <span style={{ display:"block", fontSize:11.5, color: /Couldn|blocked|weren/.test(notifyMsg) ? "#e07a5f" : "#74c464" }}>{notifyMsg}</span>}
+          </div>
+          {!notifyId && pushSupported() && !(isIOS() && !isStandalone()) && (
+            <button onClick={turnOnNotify} disabled={notifyBusy} style={{ background:"none", border:"1px solid #4cad3b", color:"#74c464", borderRadius:8, padding:"7px 10px", fontSize:12.5, fontWeight:600, cursor:"pointer", flexShrink:0 }}>{notifyBusy ? "…" : "Turn on"}</button>
+          )}
+        </div>
         {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0 }}>{err}</p>}
-        <button onClick={submit} disabled={busy} style={{ ...authBtn, background:"#e95e24", opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Send size={15} /> {busy ? "Sending…" : "Send to my leaders"}</button>
+        <button onClick={submit} disabled={busy} style={{ ...authBtn, background:"#e95e24", color:"#fff", opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Send size={15} /> {busy ? "Sending…" : "Send to my leaders"}</button>
         <p style={{ fontSize:12, color:"#5c6066", margin:"4px 0 24px", textAlign:"center", lineHeight:1.5 }}>
           {kind === "request" && share ? "Your leaders see your full name. A leader approves posts before they go on the wall." : "Only your student ministry leaders will see what you send."}
         </p>
@@ -1236,6 +1320,726 @@ function gospelTotals(people) {
   return { month, all, trusted };
 }
 
+/* ── Teaching series: weekly verse, prayer prompt, parent conversation ── */
+function ymd(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function seriesWeek(series) {
+  if (!series || !Array.isArray(series.weeks) || !series.weeks.length) return null;
+  const weeks = series.weeks.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const today = ymd();
+  let idx = -1;
+  weeks.forEach((w, i) => { if (w.date <= today) idx = i; });
+  if (idx === -1) return { upcoming: true, week: weeks[0], number: 1, total: weeks.length };
+  // After the last week has been taught for 8+ days, the series is over
+  const last = weeks[weeks.length - 1];
+  if (idx === weeks.length - 1 && (Date.now() - new Date(last.date + "T12:00:00").getTime()) > 8 * 864e5) return null;
+  return { upcoming: false, week: weeks[idx], number: idx + 1, total: weeks.length };
+}
+const prettyDay = date => new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+
+// Re-checks after sign-in (dep changes), when an admin saves the series, and every 10 minutes
+function useSeries(dep) {
+  const [series, setSeries] = React.useState(null);
+  React.useEffect(() => {
+    const load = () => fetch("/api/data?key=series", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(sr => { if (sr !== undefined) setSeries(sr); }).catch(() => {});
+    load();
+    window.addEventListener("lp-series-updated", load);
+    const t = setInterval(load, 10 * 60 * 1000);
+    return () => { window.removeEventListener("lp-series-updated", load); clearInterval(t); };
+  }, [dep]);
+  return [series, setSeries];
+}
+
+const artUrl = series => (series && series.art ? (typeof window !== "undefined" && window.__lpArtUrl ? window.__lpArtUrl(series.art) : `/api/art?v=${series.art}`) : null);
+const splitLines = t => String(t || "").split(/\n+/).map(l => l.trim().replace(/^[-•*●▪︎◦]\s*|^\d+[.)]\s*/, "")).filter(Boolean);
+
+function SeriesCard({ series, mode = "leader" }) {
+  const cur = seriesWeek(series);
+  if (!cur) return null;
+  const { week, number, total, upcoming } = cur;
+  const isParent = mode === "parent";
+  const ask = splitLines(week.parentPrompt);
+  const pray = splitLines(week.parentPray);
+  if (isParent && (upcoming || (!ask.length && !week.parentThink && !pray.length))) return null;
+  const art = artUrl(series);
+  const wrap = { width:"100%", maxWidth: mode === "leader" ? "none" : 400, boxSizing:"border-box", background:"linear-gradient(160deg, #1d2236 0%, #1f2023 60%)", border:"1px solid #3d59a855", borderRadius:14, marginBottom:14, overflow:"hidden", textAlign:"left" };
+  const eyebrow = { fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#8ea3e3" };
+  const head = { fontSize:11, letterSpacing:"0.14em", textTransform:"uppercase", fontWeight:800, color:"#e95e24", marginBottom:4 };
+  const verse = (week.verseRef || week.verseText) && (
+    <div style={{ borderLeft:"3px solid #4cad3b", paddingLeft:10 }}>
+      {week.verseText && <div style={{ fontSize:14, color:"#f2f1ee", lineHeight:1.5, fontStyle:"italic" }}>{week.verseText}</div>}
+      {week.verseRef && <div style={{ fontSize:12.5, color:"#74c464", fontWeight:700, marginTop:3 }}>{week.verseRef}</div>}
+    </div>
+  );
+  const list = items => (
+    <ul style={{ margin:0, paddingLeft:18, display:"flex", flexDirection:"column", gap:5 }}>
+      {items.map((l, i) => <li key={i} style={{ fontSize:14, color:"#f2f1ee", lineHeight:1.45 }}>{l}</li>)}
+    </ul>
+  );
+  return (
+    <div style={wrap}>
+      {art && <img src={art} alt={series.name || "Series artwork"} style={{ width:"100%", height: isParent ? 150 : 110, objectFit:"cover", display:"block" }} onError={e => { e.currentTarget.style.display = "none"; }} />}
+      <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap: isParent ? 14 : 8 }}>
+        <div>
+          <div style={eyebrow}>
+            {isParent ? `${series.name ? series.name + " · " : ""}${prettyDay(week.date)} message` : `${series.name || "This week"} · ${upcoming ? `starts ${prettyDay(week.date)}` : `Week ${number} of ${total}`}`}
+          </div>
+          {week.title && <div style={{ fontSize:17, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", lineHeight:1.25, marginTop:4 }}>{week.title}</div>}
+        </div>
+        {!isParent && verse}
+        {!isParent && week.prayerPrompt && (
+          <div style={{ fontSize:13.5, color:"#f2f1ee", lineHeight:1.45 }}><span style={{ color:"#e95e24", fontWeight:700 }}>Pray: </span>{week.prayerPrompt}</div>
+        )}
+        {isParent && week.parentThink && <div><div style={head}>Think</div><p style={{ margin:0, fontSize:14, color:"#d9d7d2", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{week.parentThink}</p></div>}
+        {isParent && verse && <div><div style={head}>Read</div>{verse}</div>}
+        {isParent && ask.length > 0 && <div><div style={head}>Ask</div><div style={{ fontSize:12.5, color:"#80848a", marginBottom:6 }}>Ask your student about this week’s message. Share personally and encourage them.</div>{list(ask)}</div>}
+        {isParent && pray.length > 0 && <div><div style={head}>Pray</div><div style={{ fontSize:12.5, color:"#80848a", marginBottom:6 }}>Pray for your student this week that they would:</div>{list(pray)}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Reads a weekly parent recap (Think / Read / Ask / Pray) pasted as text */
+function parseRecap(raw) {
+  const text = String(raw || "").replace(/\r/g, "").replace(/[ \t]+/g, " ");
+  const lines = text.split("\n").map(l => l.trim());
+  const sections = { intro: [] };
+  let cur = "intro";
+  for (const l of lines) {
+    const h = /^(think|read|ask|pray)\s*:?\s*$/i.exec(l);
+    if (h) { cur = h[1].toLowerCase(); sections[cur] = []; continue; }
+    (sections[cur] = sections[cur] || []).push(l);
+  }
+  const para = arr => (arr || []).join("\n").replace(/\n(?!\n)/g, " ").replace(/\n+/g, "\n").trim();
+  const bullets = arr => {
+    const out = [];
+    let open = false;
+    for (const l of arr || []) {
+      if (!l) { open = false; continue; }
+      if (/^([•●▪◦*-]|\d+[.)])\s*/.test(l)) { out.push(l.replace(/^([•●▪◦*-]|\d+[.)])\s*/, "")); open = true; }
+      else if (open && out.length) out[out.length - 1] += " " + l;
+    }
+    return out;
+  };
+  const intro = para(sections.intro);
+  const nameM = /series (?:called|titled|named)\s+[“"]?(.+?)[”"]?\s*\.(?:\s|$)/i.exec(intro);
+  const bookM = /book of ([A-Z0-9][\w ]+?)[\s,.]/.exec(intro);
+  const read = para(sections.read);
+  const refM = /^(.+?\d+:\d+(?:\s*[-–]\s*\d+)?)\s+(?:says|reads|tells us)[:,]?\s+([\s\S]*)$/i.exec(read);
+  const ask = bullets(sections.ask);
+  const pray = bullets(sections.pray);
+  const prayerLead = pray[0] ? `Pray that students would ${pray[0].charAt(0).toLowerCase()}${pray[0].slice(1)}` : "";
+  return {
+    seriesName: nameM ? nameM[1].trim() : "",
+    book: bookM ? bookM[1].trim() : "",
+    verseRef: refM ? refM[1].replace(/\s*[-–]\s*/, "–").trim() : "",
+    verseText: refM ? refM[2].trim() : read,
+    parentThink: para(sections.think),
+    parentPrompt: ask.join("\n"),
+    parentPray: pray.join("\n"),
+    prayerPrompt: prayerLead,
+    found: !!(sections.think || sections.read || sections.ask || sections.pray),
+  };
+}
+
+// The most recent Wednesday (or today if it is Wednesday), as YYYY-MM-DD
+function lastWeekday(dow = 3) {
+  const d = new Date();
+  d.setDate(d.getDate() - ((d.getDay() - dow + 7) % 7));
+  return ymd(d);
+}
+
+function SeriesEditor() {
+  const [series, setSeries] = React.useState(null);
+  const [loaded, setLoaded] = React.useState(false);
+  const [dirty, setDirty] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+  const [confirmDel, setConfirmDel] = React.useState(null);
+  const [confirmNew, setConfirmNew] = React.useState(false);
+  const [paste, setPaste] = React.useState("");
+  const [pasteDate, setPasteDate] = React.useState(lastWeekday(3));
+  const [pasteMsg, setPasteMsg] = React.useState("");
+  const [artBusy, setArtBusy] = React.useState(false);
+  const artRef = React.useRef(null);
+  React.useEffect(() => {
+    fetch("/api/data?key=series", { cache: "no-store" }).then(r => r.ok ? r.json() : null)
+      .then(sr => { setSeries(sr || { name: "", weeks: [] }); setLoaded(true); }).catch(() => setLoaded(true));
+  }, []);
+  const weeks = (series?.weeks || []);
+  function update(fn) { setSeries(prev => fn({ ...prev, weeks: (prev.weeks || []).slice() })); setDirty(true); setMsg(""); }
+  function setWeek(id, field, value) { update(sr => ({ ...sr, weeks: sr.weeks.map(w => w.id === id ? { ...w, [field]: value } : w) })); }
+  const blankWeek = date => ({ id: genId(), date, title: "", verseRef: "", verseText: "", prayerPrompt: "", parentPrompt: "", parentThink: "", parentPray: "" });
+  function addWeek() {
+    update(sr => {
+      const last = sr.weeks.slice().sort((a, b) => a.date.localeCompare(b.date)).pop();
+      const d = last ? new Date(last.date + "T12:00:00") : new Date();
+      if (last) d.setDate(d.getDate() + 7);
+      return { ...sr, weeks: [...sr.weeks, blankWeek(ymd(d))] };
+    });
+  }
+  function fillFromPaste() {
+    const r = parseRecap(paste);
+    if (!r.found) { setPasteMsg("Couldn’t find the THINK / READ / ASK / PRAY sections. Paste the whole recap, including those headings."); return; }
+    update(sr => {
+      const existing = sr.weeks.find(w => w.date === pasteDate);
+      const n = sr.weeks.filter(w => w.date < pasteDate).length + 1;
+      const fill = { verseRef: r.verseRef, verseText: r.verseText, parentThink: r.parentThink, parentPrompt: r.parentPrompt, parentPray: r.parentPray };
+      const weeksNext = existing
+        ? sr.weeks.map(w => w.id === existing.id ? { ...w, ...Object.fromEntries(Object.entries(fill).filter(([, v]) => v)), prayerPrompt: w.prayerPrompt || r.prayerPrompt, title: w.title || `Session ${n}` } : w)
+        : [...sr.weeks, { ...blankWeek(pasteDate), ...fill, prayerPrompt: r.prayerPrompt, title: `Session ${n}` }];
+      return { ...sr, name: sr.name || r.seriesName, book: sr.book || r.book, weeks: weeksNext };
+    });
+    setPasteMsg(`Filled in the ${prettyDay(pasteDate)} week. Check it below, then Save series.`);
+    setPaste("");
+  }
+  async function uploadArt(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setArtBusy(true);
+    try {
+      const blob = await resizeImage(file, 1000, false);
+      const form = new FormData(); form.append("art", blob, "art.jpg");
+      const res = await fetch("/api/art", { method: "POST", body: form });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.error || "Upload failed");
+      if (window.__lpArtUpload) window.__lpArtUpload(d.v, blob);
+      update(sr => ({ ...sr, art: d.v }));
+    } catch (err) { setMsg(err.message || "Couldn’t upload the artwork."); }
+    setArtBusy(false);
+  }
+  async function save() {
+    setMsg("Saving…");
+    try {
+      const res = await fetch("/api/data?key=series", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(series) });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error();
+      setSeries(d.series || { name: "", weeks: [] }); setDirty(false); setMsg("Saved. Everyone sees the update now.");
+      window.dispatchEvent(new Event("lp-series-updated"));
+    } catch (_e) { setMsg("Couldn’t save. Check your connection and try again."); }
+  }
+  if (!loaded) return <div style={S.importWrap}><p style={S.reportEmpty}>Loading…</p></div>;
+
+  const field = { ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:13.5 };
+  const lbl = { fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, margin:"0 0 4px", display:"block" };
+  const hint = t => <span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>{t}</span>;
+  const cur = seriesWeek(series);
+  const panel = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 };
+  return (
+    <div style={S.importWrap}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><BookOpen size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Teaching Series</p></div>
+      <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>
+        Each week shows starting on its message date. Leaders and students see the verse and prayer prompt; parents see Think, Read, Ask and Pray on the parent page.
+      </p>
+      {cur && <SeriesCard series={series} mode="leader" />}
+
+      <div style={{ ...panel, marginBottom:14 }}>
+        <label style={lbl} htmlFor="series-name">Series name</label>
+        <input id="series-name" value={series.name || ""} onChange={e => update(sr => ({ ...sr, name: e.target.value }))} placeholder="e.g. Grace and Transformation" style={field} />
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <input ref={artRef} type="file" accept="image/*" onChange={uploadArt} style={{ display:"none" }} />
+          {artUrl(series)
+            ? <img src={artUrl(series)} alt="" style={{ width:64, height:80, objectFit:"cover", borderRadius:6, flexShrink:0 }} />
+            : <div style={{ width:64, height:80, borderRadius:6, border:`1.5px dashed ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", color:C.muted, flexShrink:0 }}><Camera size={18} /></div>}
+          <div style={{ flex:1, minWidth:0, fontSize:12.5, color:C.muted, lineHeight:1.45 }}>Series artwork shows across the top of the series card.</div>
+          <button onClick={() => artRef.current && artRef.current.click()} disabled={artBusy} style={S.cancelBtn}>{artBusy ? "Uploading…" : artUrl(series) ? "Change" : "Add artwork"}</button>
+        </div>
+      </div>
+
+      <div style={{ ...panel, marginBottom:14, borderColor:`${C.blue}66` }}>
+        <span style={{ ...lbl, color:"#8ea3e3" }}>Paste a weekly recap</span>
+        <p style={{ margin:0, fontSize:12.5, color:C.muted, lineHeight:1.45 }}>Copy the whole parent recap (with the THINK, READ, ASK and PRAY headings) and paste it here. It fills in that week for you.</p>
+        <textarea value={paste} onChange={e => { setPaste(e.target.value); setPasteMsg(""); }} rows={4} placeholder={"This week, we kicked off a new teaching series called…\nTHINK\n…\nREAD\n…\nASK\n• …\nPRAY\n• …"} style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+          <span style={{ fontSize:12.5, color:C.muted }}>Message date</span>
+          <input type="date" value={pasteDate} onChange={e => e.target.value && setPasteDate(e.target.value)} style={S.gradeSelect} aria-label="Message date for the pasted recap" />
+          <button onClick={fillFromPaste} disabled={!paste.trim()} style={{ ...S.reqAddBtn, marginLeft:"auto", opacity: paste.trim() ? 1 : 0.5 }}>Fill in this week</button>
+        </div>
+        {pasteMsg && <p style={{ margin:0, fontSize:12.5, color: /Couldn/.test(pasteMsg) ? "#e07a5f" : C.accentLight }}>{pasteMsg}</p>}
+      </div>
+
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {weeks.slice().sort((a, b) => a.date.localeCompare(b.date)).map((w, i) => (
+          <div key={w.id} style={{ ...panel, borderColor: cur && cur.week.id === w.id && !cur.upcoming ? C.accent : C.border }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:13, fontWeight:700, color:C.cream }}>Week {i + 1}</span>
+              {cur && cur.week.id === w.id && !cur.upcoming && <span style={{ ...S.badgeSm, background:C.accentBg, color:C.accentLight }}>showing now</span>}
+              <input type="date" value={w.date} onChange={e => e.target.value && setWeek(w.id, "date", e.target.value)} aria-label={`Week ${i + 1} message date`} style={{ ...S.gradeSelect, marginLeft:"auto" }} />
+            </div>
+            <div><label style={lbl}>Message title</label><input value={w.title} onChange={e => setWeek(w.id, "title", e.target.value)} placeholder="e.g. Not ashamed" style={field} /></div>
+            <div><label style={lbl}>Verse reference</label><input value={w.verseRef} onChange={e => setWeek(w.id, "verseRef", e.target.value)} placeholder="e.g. Romans 1:16–17" style={field} /></div>
+            <div><label style={lbl}>Verse text {hint("(from the translation you teach)")}</label><textarea value={w.verseText} onChange={e => setWeek(w.id, "verseText", e.target.value)} rows={3} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+            <div><label style={lbl}>Prayer prompt {hint("(students and leaders)")}</label><textarea value={w.prayerPrompt} onChange={e => setWeek(w.id, "prayerPrompt", e.target.value)} rows={2} placeholder="e.g. Pray that students would not be ashamed of the gospel." style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+            <div style={{ borderTop:`1px solid ${C.faint}`, paddingTop:10, display:"flex", flexDirection:"column", gap:10 }}>
+              <span style={{ ...lbl, color:"#b49ad0", margin:0 }}>For parents</span>
+              <div><label style={lbl}>Think {hint("(the big idea)")}</label><textarea value={w.parentThink || ""} onChange={e => setWeek(w.id, "parentThink", e.target.value)} rows={3} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+              <div><label style={lbl}>Ask {hint("(one question per line)")}</label><textarea value={w.parentPrompt || ""} onChange={e => setWeek(w.id, "parentPrompt", e.target.value)} rows={3} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+              <div><label style={lbl}>Pray {hint("(one per line: “pray that they would…”)")}</label><textarea value={w.parentPray || ""} onChange={e => setWeek(w.id, "parentPray", e.target.value)} rows={2} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+              {confirmDel === w.id ? (
+                <>
+                  <span style={{ fontSize:12, color:C.muted, alignSelf:"center" }}>Remove this week?</span>
+                  <button onClick={() => { update(sr => ({ ...sr, weeks: sr.weeks.filter(x => x.id !== w.id) })); setConfirmDel(null); }} style={{ ...S.reqAddBtn, background:"#8a5050", color:"#fff" }}>Remove</button>
+                  <button onClick={() => setConfirmDel(null)} style={S.cancelBtn}>Cancel</button>
+                </>
+              ) : <button onClick={() => setConfirmDel(w.id)} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Remove week</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={addWeek} style={{ ...S.addReqTrigger, marginTop:12, alignSelf:"stretch", justifyContent:"center", padding:"10px 12px", fontSize:13 }}><Plus size={14} style={{ marginRight:5 }} /> Add a week</button>
+
+      <div style={{ position:"sticky", bottom:0, background:C.bg, padding:"12px 0", marginTop:12, display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${C.border}` }}>
+        <button onClick={save} disabled={!dirty} style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.5 }}>Save series</button>
+        <span style={{ fontSize:12, color: /Couldn/.test(msg) ? "#e07a5f" : dirty ? C.orange : C.muted }}>{msg || (dirty ? "Unsaved changes" : "")}</span>
+        {!confirmNew
+          ? <button onClick={() => setConfirmNew(true)} style={{ marginLeft:"auto", background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Start a new series…</button>
+          : <span style={{ marginLeft:"auto", display:"flex", gap:6, alignItems:"center" }}>
+              <span style={{ fontSize:12, color:C.muted }}>Clear all weeks?</span>
+              <button onClick={() => { update(() => ({ name: "", weeks: [], art: 0 })); setConfirmNew(false); }} style={{ ...S.reqAddBtn, background:"#8a5050", color:"#fff" }}>Clear</button>
+              <button onClick={() => setConfirmNew(false)} style={S.cancelBtn}>No</button>
+            </span>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Event prayer focus (camp, retreats, mission trips) ── */
+const dayNum = d => Math.round(new Date(d + "T12:00:00").getTime() / 864e5);
+function eventStatus(e) {
+  if (!e || !e.start) return null;
+  const today = dayNum(ymd()), start = dayNum(e.start), end = dayNum(e.end && e.end >= e.start ? e.end : e.start);
+  if (today < start) return start - today <= 45 ? { phase: "upcoming", days: start - today } : null;
+  if (today <= end) return { phase: "now", day: today - start + 1, total: end - start + 1 };
+  return null;
+}
+function useEvents(dep) {
+  const [events, setEvents] = React.useState([]);
+  React.useEffect(() => {
+    const load = () => fetch("/api/data?key=events", { cache: "no-store" }).then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setEvents(l)).catch(() => {});
+    load();
+    window.addEventListener("lp-events-updated", load);
+    const t = setInterval(load, 10 * 60 * 1000);
+    return () => { window.removeEventListener("lp-events-updated", load); clearInterval(t); };
+  }, [dep]);
+  return [events, setEvents];
+}
+const prettyRange = e => {
+  const f = d => new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return e.end && e.end !== e.start ? `${f(e.start)} – ${f(e.end)}` : f(e.start);
+};
+
+function EventCards({ events, mode = "leader", onPrayThrough }) {
+  const live = (events || []).map(e => ({ e, st: eventStatus(e) })).filter(x => x.st);
+  if (!live.length) return null;
+  return (
+    <>
+      {live.map(({ e, st }) => {
+        const going = mode === "leader" ? (e.attendees || []).length : (e.going || 0);
+        const points = splitLines(e.prayerPoints);
+        return (
+          <div key={e.id} style={{ width:"100%", maxWidth: mode === "leader" ? "none" : 400, boxSizing:"border-box", background:"linear-gradient(150deg, #2c1a12 0%, #1f2023 70%)", border:"1px solid #e95e2455", borderRadius:14, padding:"14px 16px", marginBottom:14, display:"flex", flexDirection:"column", gap:8, textAlign:"left" }}>
+            <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
+              <div style={{ fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#f08a5d" }}>{st.phase === "now" ? `Happening now · Day ${st.day} of ${st.total}` : `${prettyRange(e)} · pray now`}</div>
+              {st.phase === "upcoming" && (
+                <div style={{ marginLeft:"auto", textAlign:"right", lineHeight:1 }}>
+                  <span style={{ fontSize:24, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", fontVariantNumeric:"tabular-nums" }}>{st.days}</span>
+                  <span style={{ fontSize:11, color:"#80848a", display:"block", marginTop:2 }}>{st.days === 1 ? "day to go" : "days to go"}</span>
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize:18, fontWeight:800, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif", lineHeight:1.2, marginTop: st.phase === "upcoming" ? -4 : 0 }}>{e.name}</div>
+            {e.focus && <p style={{ margin:0, fontSize:13.5, color:"#d9d7d2", lineHeight:1.5, whiteSpace:"pre-wrap" }}>{e.focus}</p>}
+            {points.length > 0 && (
+              <ul style={{ margin:0, paddingLeft:18, display:"flex", flexDirection:"column", gap:4 }}>
+                {points.map((l, i) => <li key={i} style={{ fontSize:13.5, color:"#f2f1ee", lineHeight:1.45 }}>{l}</li>)}
+              </ul>
+            )}
+            {going > 0 && mode !== "leader" && <div style={{ fontSize:12.5, color:"#80848a" }}>{going} going. Pray for every one of them.</div>}
+            {mode === "leader" && going > 0 && onPrayThrough && (
+              <button onClick={() => onPrayThrough(e.id)} style={{ alignSelf:"flex-start", background:"#e95e24", color:"#fff", border:"none", borderRadius:10, padding:"9px 14px", fontSize:13.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                🙏 Pray through the {going} going
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function EventsEditor({ people, smallGroups }) {
+  const [events, setEvents] = React.useState(null);
+  const [dirty, setDirty] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+  const [openId, setOpenId] = React.useState(null);
+  const [search, setSearch] = React.useState("");
+  const [confirmDel, setConfirmDel] = React.useState(null);
+  React.useEffect(() => {
+    fetch("/api/data?key=events", { cache: "no-store" }).then(r => r.ok ? r.json() : []).then(l => setEvents(Array.isArray(l) ? l : [])).catch(() => setEvents([]));
+  }, []);
+  const roster = React.useMemo(() => people.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)), [people]);
+  function change(fn) { setEvents(prev => fn(prev.slice())); setDirty(true); setMsg(""); }
+  function setEv(id, field, value) { change(list => list.map(e => e.id === id ? { ...e, [field]: value } : e)); }
+  function addEvent() {
+    const d = new Date(); d.setDate(d.getDate() + 14);
+    const id = genId();
+    change(list => [...list, { id, name: "", start: ymd(d), end: ymd(d), focus: "", prayerPoints: "", attendees: [] }]);
+    setOpenId(id);
+  }
+  function toggleAtt(id, pid) { change(list => list.map(e => e.id !== id ? e : { ...e, attendees: e.attendees.includes(pid) ? e.attendees.filter(x => x !== pid) : [...e.attendees, pid] })); }
+  function addMany(id, pids) { change(list => list.map(e => e.id !== id ? e : { ...e, attendees: Array.from(new Set([...e.attendees, ...pids])) })); }
+  async function save() {
+    setMsg("Saving…");
+    try {
+      const res = await fetch("/api/data?key=events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(events.filter(e => e.name.trim())) });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error();
+      setEvents(d.events); setDirty(false); setMsg("Saved."); window.dispatchEvent(new Event("lp-events-updated"));
+    } catch (_e) { setMsg("Couldn’t save. Give each event a name and a start date."); }
+  }
+  if (!events) return <div style={S.importWrap}><p style={S.reportEmpty}>Loading…</p></div>;
+  const field = { ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:13.5 };
+  const lbl = { fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, margin:"0 0 4px", display:"block" };
+  const quick = { background:"none", border:`1px solid ${C.border}`, color:C.cream, borderRadius:14, padding:"4px 10px", fontSize:12, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" };
+  return (
+    <div style={S.importWrap}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><Star size={16} color={C.orange} /><p style={{ ...S.reportTitle, margin:0, color:C.orange }}>Event Prayer Focus</p></div>
+      <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>Camp, retreats, mission trips. A countdown card shows for leaders, students and parents starting up to 45 days out. Leaders can pray through everyone going; students and parents only see how many are going.</p>
+      {events.length === 0 && <p style={S.reportEmpty}>No events yet.</p>}
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        {events.map(e => {
+          const open = openId === e.id;
+          const st = eventStatus(e);
+          return (
+            <div key={e.id} style={{ background:C.surface, border:`1px solid ${st ? C.orange + "88" : C.border}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+              <button onClick={() => setOpenId(open ? null : e.id)} style={{ display:"flex", alignItems:"center", gap:8, background:"none", border:"none", padding:0, cursor:"pointer", textAlign:"left", color:C.cream, fontFamily:"'Inter', system-ui, sans-serif" }}>
+                <span style={{ fontSize:14, fontWeight:700, flex:1, minWidth:0 }}>{e.name || "New event"}</span>
+                <span style={{ fontSize:12, color:C.muted }}>{prettyRange(e)} · {e.attendees.length} going</span>
+                <ChevronRight size={16} color={C.muted} style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s" }} />
+              </button>
+              {open && (
+                <>
+                  <div><label style={lbl}>Event name</label><input value={e.name} onChange={x => setEv(e.id, "name", x.target.value)} placeholder="e.g. Fall Retreat" style={field} /></div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    <div style={{ flex:1, minWidth:130 }}><label style={lbl}>Starts</label><input type="date" value={e.start || ""} onChange={x => x.target.value && setEv(e.id, "start", x.target.value)} style={{ ...field, colorScheme:"dark" }} /></div>
+                    <div style={{ flex:1, minWidth:130 }}><label style={lbl}>Ends</label><input type="date" value={e.end || ""} onChange={x => x.target.value && setEv(e.id, "end", x.target.value)} style={{ ...field, colorScheme:"dark" }} /></div>
+                  </div>
+                  <div><label style={lbl}>Prayer focus</label><textarea value={e.focus} onChange={x => setEv(e.id, "focus", x.target.value)} rows={3} placeholder="e.g. Pray that every student would meet Jesus this weekend." style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+                  <div><label style={lbl}>Prayer points <span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>(one per line)</span></label><textarea value={e.prayerPoints} onChange={x => setEv(e.id, "prayerPoints", x.target.value)} rows={3} placeholder={"Safe travel\nOpen hearts during worship\nLeaders with energy and wisdom"} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+                  <div>
+                    <label style={lbl}>Who’s going · {e.attendees.length}</label>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
+                      <button onClick={() => addMany(e.id, roster.filter(p => p.type === "student").map(p => p.id))} style={quick}>+ All students</button>
+                      <button onClick={() => addMany(e.id, roster.filter(p => p.type === "student" && inHS(p)).map(p => p.id))} style={quick}>+ HS</button>
+                      <button onClick={() => addMany(e.id, roster.filter(p => p.type === "student" && inMS(p)).map(p => p.id))} style={quick}>+ MS</button>
+                      <button onClick={() => addMany(e.id, roster.filter(p => p.type === "leader").map(p => p.id))} style={quick}>+ Leaders</button>
+                      {smallGroups.map(g => <button key={g.id} onClick={() => addMany(e.id, roster.filter(p => inSG(p, g.id)).map(p => p.id))} style={quick}>+ {g.name}</button>)}
+                      {e.attendees.length > 0 && <button onClick={() => setEv(e.id, "attendees", [])} style={{ ...quick, color:C.muted }}>Clear</button>}
+                    </div>
+                    <input value={search} onChange={x => setSearch(x.target.value)} placeholder="Search to add or remove people…" style={{ ...field, marginBottom:6 }} />
+                    <div style={{ maxHeight:220, overflowY:"auto", border:`1px solid ${C.faint}`, borderRadius:8 }}>
+                      {roster.filter(p => p.name.toLowerCase().includes(search.toLowerCase())).map(p => (
+                        <label key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 10px", borderBottom:`1px solid ${C.faint}`, fontSize:13, color:C.cream, cursor:"pointer" }}>
+                          <input type="checkbox" checked={e.attendees.includes(p.id)} onChange={() => toggleAtt(e.id, p.id)} style={{ accentColor:C.accent }} />
+                          <span style={{ flex:1 }}>{p.name}</span>
+                          <span style={{ fontSize:11, color:C.muted }}>{p.type === "leader" ? "leader" : p.grade ? `${ordinal(p.grade)}` : ""}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+                    {confirmDel === e.id ? (
+                      <>
+                        <span style={{ fontSize:12, color:C.muted, alignSelf:"center" }}>Delete this event?</span>
+                        <button onClick={() => { change(list => list.filter(x => x.id !== e.id)); setConfirmDel(null); }} style={{ ...S.reqAddBtn, background:"#8a5050", color:"#fff" }}>Delete</button>
+                        <button onClick={() => setConfirmDel(null)} style={S.cancelBtn}>Cancel</button>
+                      </>
+                    ) : <button onClick={() => setConfirmDel(e.id)} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Delete event</button>}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={addEvent} style={{ ...S.addReqTrigger, marginTop:12, alignSelf:"stretch", justifyContent:"center", padding:"10px 12px", fontSize:13 }}><Plus size={14} style={{ marginRight:5 }} /> Add an event</button>
+      <div style={{ position:"sticky", bottom:0, background:C.bg, padding:"12px 0", marginTop:12, display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${C.border}` }}>
+        <button onClick={save} disabled={!dirty} style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.5 }}>Save events</button>
+        <span style={{ fontSize:12, color: /Couldn/.test(msg) ? "#e07a5f" : dirty ? C.orange : C.muted }}>{msg || (dirty ? "Unsaved changes" : "")}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Leader follow-up nudges: who to check in with this week ── */
+const CHECKIN_KEY = () => `lp-checkin-${new Date(getWeekStartET()).toISOString().slice(0, 10)}`;
+const DAY = 864e5;
+
+function checkInReasons(p, now = Date.now()) {
+  const out = [];
+  const fam = (p.familyRequests || []).find(f => now - (f.at || 0) < 7 * DAY);
+  if (fam) out.push({ key: "fam", label: fam.dontMention ? "Family shared a request (don’t mention it)" : "Their family shared a request", color: "#b49ad0", rank: 0 });
+  if ((p.reqTimes || []).some(t => now - t < 7 * DAY)) out.push({ key: "req", label: "New prayer request this week", color: "#8ea3e3", rank: 1 });
+  const b = getBirthdayStatus(p.birthday);
+  if (b && (b.today || b.urgent || b.label)) {
+    const days = (() => { if (!p.birthday) return 99; const [m, d] = p.birthday.split("-").map(Number); const t = new Date(); t.setHours(0,0,0,0); let x = new Date(t.getFullYear(), m - 1, d); if (x < t) x.setFullYear(t.getFullYear() + 1); return Math.round((x - t) / DAY); })();
+    if (days <= 7) out.push({ key: "bday", label: days === 0 ? "Birthday today 🎂" : `Birthday in ${days} day${days === 1 ? "" : "s"} 🎂`, color: "#e6b34a", rank: 2 });
+  }
+  const g = (p.gospelLog || []).find(x => now - (x.at || 0) < 14 * DAY);
+  if (g) out.push({ key: "gospel", label: g.outcome === "trusted" ? "A friend trusted Jesus! Celebrate 🎉" : "Shared the Gospel. Ask how it went", color: C.orange, rank: 1 });
+  const since = p.prayedAt ? now - p.prayedAt : Infinity;
+  if (since >= 14 * DAY) out.push({ key: "quiet", label: p.prayedAt ? `Not prayed for in ${Math.floor(since / (7 * DAY))} weeks` : "Not prayed for yet", color: C.muted, rank: 3 });
+  return out.sort((a, b) => a.rank - b.rank);
+}
+
+function CheckInCard({ people, myGroupId, groupName, isAdmin, goToPerson }) {
+  const [done, setDone] = React.useState(() => { try { return JSON.parse(lsGet(CHECKIN_KEY()) || "[]"); } catch (_e) { return []; } });
+  const [open, setOpen] = React.useState(() => lsGet("lp-checkin-open") !== "0");
+  const [calls, setCalls] = React.useState(0);
+  React.useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/family").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setCalls(l.filter(f => f.followUp && !f.done).length)).catch(() => {});
+  }, [isAdmin]);
+  const scope = people.filter(p => p.active !== false && p.type === "student" && (!myGroupId || inSG(p, myGroupId)));
+  const items = scope.map(p => ({ p, reasons: checkInReasons(p) })).filter(x => x.reasons.length)
+    .sort((a, b) => a.reasons[0].rank - b.reasons[0].rank || (a.p.prayedAt || 0) - (b.p.prayedAt || 0));
+  const limit = myGroupId ? 12 : 6;
+  const todo = items.filter(x => !done.includes(x.p.id));
+  const shown = [...todo, ...items.filter(x => done.includes(x.p.id))].slice(0, limit);
+  if (!items.length && !calls) return null;
+  function toggle(id) {
+    const next = done.includes(id) ? done.filter(x => x !== id) : [...done, id];
+    setDone(next); lsSet(CHECKIN_KEY(), JSON.stringify(next));
+  }
+  function flip() { setOpen(o => { lsSet("lp-checkin-open", o ? "0" : "1"); return !o; }); }
+  return (
+    <div style={{ width:"100%", boxSizing:"border-box", background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, marginBottom:12 }}>
+      <button onClick={flip} style={{ width:"100%", display:"flex", alignItems:"center", gap:8, padding:"12px 14px", background:"none", border:"none", cursor:"pointer", color:C.cream, fontFamily:"'Inter', system-ui, sans-serif" }}>
+        <Users size={15} color={C.accent} />
+        <span style={{ fontSize:14, fontWeight:700 }}>Check in this week</span>
+        <span style={{ fontSize:12, color:C.muted }}>{myGroupId && groupName(myGroupId) ? `· ${groupName(myGroupId)}` : ""}</span>
+        {todo.length > 0 && <span style={{ ...S.tabBadge, position:"static", background:C.accent, color:"#101112" }}>{todo.length}</span>}
+        <ChevronRight size={16} color={C.muted} style={{ marginLeft:"auto", transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s" }} />
+      </button>
+      {open && (
+        <div style={{ padding:"0 14px 12px", display:"flex", flexDirection:"column", gap:2 }}>
+          {isAdmin && calls > 0 && <div style={{ fontSize:13, color:C.cream, background:"#221e29", border:"1px solid #b49ad033", borderRadius:10, padding:"9px 12px", marginBottom:6 }}>📞 {calls} parent{calls === 1 ? "" : "s"} asked for a call. See the bottom of your Inbox.</div>}
+          {shown.map(({ p, reasons }) => {
+            const isDone = done.includes(p.id);
+            return (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderTop:`1px solid ${C.faint}`, opacity: isDone ? 0.5 : 1 }}>
+                <Avatar person={p} size={34} />
+                <button onClick={() => goToPerson(p.id)} style={{ flex:1, minWidth:0, textAlign:"left", background:"none", border:"none", padding:0, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                  <div style={{ fontSize:14, color:C.cream, fontWeight:600, textDecoration: isDone ? "line-through" : "none" }}>{p.name}</div>
+                  <div style={{ fontSize:12, color: reasons[0].color, lineHeight:1.35 }}>{reasons.map(r => r.label).join(" · ")}</div>
+                </button>
+                <button onClick={() => toggle(p.id)} aria-pressed={isDone} title={isDone ? "Undo" : "I checked in"} style={{ flexShrink:0, background: isDone ? C.accentBg : "none", border:`1px solid ${isDone ? C.accent : C.border}`, color: isDone ? C.accentLight : C.muted, borderRadius:8, padding:"6px 9px", fontSize:12, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{isDone ? "✓ Done" : "Checked in"}</button>
+              </div>
+            );
+          })}
+          {items.length > shown.length && <div style={{ fontSize:12, color:C.muted, paddingTop:6 }}>+ {items.length - shown.length} more{!myGroupId ? ". Pick your small group above to focus this list." : ""}</div>}
+          <div style={{ fontSize:11.5, color:C.muted, paddingTop:6 }}>Text, call, or catch them at youth group. “Checked in” is just for you and resets each Monday.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Monthly recap (admin → Report) ── */
+function MonthlyRecap({ people, weekHistory, ministryName }) {
+  const months = React.useMemo(() => {
+    const out = []; const d = new Date(); d.setDate(1);
+    for (let i = 0; i < 6; i++) { out.push({ y: d.getFullYear(), m: d.getMonth() }); d.setMonth(d.getMonth() - 1); }
+    return out;
+  }, []);
+  const [idx, setIdx] = React.useState(() => (new Date().getDate() <= 7 ? 1 : 0)); // early in the month, show last month
+  const [copied, setCopied] = React.useState(false);
+  const { y, m } = months[idx];
+  const from = new Date(y, m, 1).getTime(), to = new Date(y, m + 1, 1).getTime();
+  const inMonth = t => t >= from && t < to;
+  const label = new Date(y, m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const active = people.filter(p => p.active !== false);
+
+  const weeks = weekHistory.filter(w => inMonth(w.prevWeekStart || w.weekStart));
+  const prayers = weeks.reduce((n, w) => n + (w.count || 0), 0);
+  const perWeek = weeks.length ? Math.round(prayers / weeks.length) : null;
+  const requests = active.reduce((n, p) => n + (p.reqTimes || []).filter(inMonth).length, 0);
+  const family = active.reduce((n, p) => n + (p.familyRequests || []).filter(f => inMonth(f.at || 0)).length, 0);
+  const answeredList = active.flatMap(p => (p.answered || []).filter(a => inMonth(a.at || 0)).map(a => ({ ...a, who: p.name })));
+  const gospel = active.flatMap(p => (p.gospelLog || []).filter(g => inMonth(g.at || 0)).map(g => ({ ...g, who: p.name })));
+  const convos = gospel.reduce((n, g) => n + (g.count || 0), 0);
+  const trusted = gospel.filter(g => g.outcome === "trusted").length;
+  const sharers = new Set(gospel.map(g => g.who)).size;
+  const stories = [
+    ...answeredList.filter(a => a.update).map(a => ({ at: a.at, text: `${a.who.split(" ")[0]}: ${a.update}`, kind: "Answered prayer" })),
+    ...gospel.filter(g => g.story).map(g => ({ at: g.at, text: `${g.who.split(" ")[0]}: ${g.story}`, kind: g.outcome === "trusted" ? "Trusted Jesus" : "Gospel conversation" })),
+  ].sort((a, b) => b.at - a.at).slice(0, 5);
+
+  const stats = [
+    [prayers, "times students & leaders were prayed for", weeks.length ? `${weeks.length} week${weeks.length === 1 ? "" : "s"} counted` : "counted each Monday"],
+    [perWeek === null ? "—" : perWeek, "prayers in an average week", ""],
+    [requests + family, requests + family === 1 ? "prayer request shared" : "prayer requests shared", family ? `${family} from parents` : ""],
+    [answeredList.length, answeredList.length === 1 ? "answered prayer" : "answered prayers", ""],
+    [convos, "Gospel conversations", sharers ? `by ${sharers} student${sharers === 1 ? "" : "s"}` : ""],
+    [trusted, trusted === 1 ? "friend trusted Jesus" : "friends trusted Jesus", ""],
+  ];
+  const textVersion = [
+    `${ministryName || "IMPACT Students"} · Let’s Pray recap · ${label}`,
+    ...stats.map(([n, l, sub]) => `• ${n} ${l}${sub ? ` (${sub})` : ""}`),
+    stories.length ? "\nStories:" : "",
+    ...stories.map(s => `• ${s.kind}. ${s.text}`),
+  ].filter(Boolean).join("\n");
+  async function copy() {
+    try { await navigator.clipboard.writeText(textVersion); setCopied(true); setTimeout(() => setCopied(false), 2500); }
+    catch (_e) { setCopied("select"); }
+  }
+  return (
+    <div style={{ ...S.reportBox, display:"flex", flexDirection:"column", gap:12 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+        <BarChart2 size={16} color={C.accent} />
+        <p style={{ ...S.reportTitle, margin:0 }}>Monthly Recap</p>
+        <select value={idx} onChange={e => setIdx(Number(e.target.value))} style={{ ...S.gradeSelect, marginLeft:"auto" }} aria-label="Month">
+          {months.map((mm, i) => <option key={i} value={i}>{new Date(mm.y, mm.m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}{i === 0 ? " (so far)" : ""}</option>)}
+        </select>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2, minmax(0, 1fr))", gap:8 }}>
+        {stats.map(([n, l, sub]) => (
+          <div key={l} style={{ background:C.faint, borderRadius:10, padding:"10px 12px" }}>
+            <div style={{ fontSize:22, fontWeight:800, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif", fontVariantNumeric:"tabular-nums" }}>{n}</div>
+            <div style={{ fontSize:12, color:C.cream, lineHeight:1.35 }}>{l}</div>
+            {sub && <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+      {stories.length > 0 && (
+        <div>
+          <div style={{ fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>Stories to share</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {stories.map((st, i) => (
+              <div key={i} style={{ fontSize:13, color:C.cream, lineHeight:1.45, borderLeft:`3px solid ${st.kind === "Answered prayer" ? C.accent : C.orange}`, paddingLeft:10 }}>
+                <span style={{ fontSize:11, color:C.muted, display:"block" }}>{st.kind}</span>{st.text}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={copy} style={S.confirmBtn}>{copied === true ? "Copied!" : "Copy recap as text"}</button>
+        <span style={{ fontSize:12, color:C.muted, lineHeight:1.4 }}>Paste into an email, text or staff meeting notes.</span>
+      </div>
+      {copied === "select" && <textarea readOnly value={textVersion} rows={8} onFocus={e => e.target.select()} style={{ ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:12.5 }} />}
+      <div style={{ fontSize:11.5, color:C.muted, lineHeight:1.45 }}>Prayer counts come from the weekly totals saved each Monday. Requests, answered prayers and Gospel conversations count from the day they were added.</div>
+    </div>
+  );
+}
+
+/* ── Leader devotional: a weekly note from the student pastor ── */
+const DEVO_SEEN_KEY = "lp-devo-seen";
+
+function LeaderNote({ note }) {
+  const [seen, setSeen] = React.useState(() => lsGet(DEVO_SEEN_KEY) || "");
+  const [open, setOpen] = React.useState(false);
+  if (!note || (!note.title && !note.body)) return null;
+  const collapsed = seen === note.id && !open;
+  const long = (note.body || "").length > 260;
+  const wrap = { width:"100%", boxSizing:"border-box", background:"#2b2414", border:"1px solid #e6b34a44", borderRadius:14, marginBottom:12, textAlign:"left" };
+  if (collapsed) return (
+    <button onClick={() => setOpen(true)} style={{ ...wrap, display:"flex", alignItems:"center", gap:8, padding:"10px 14px", cursor:"pointer", color:C.cream, fontSize:13, fontFamily:"'Inter', system-ui, sans-serif" }}>
+      <BookOpen size={14} color="#e6b34a" style={{ flexShrink:0 }} />
+      <span style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{note.title || "A note for leaders"}</span>
+      <span style={{ color:"#e6b34a", fontWeight:600, flexShrink:0 }}>Read</span>
+    </button>
+  );
+  return (
+    <div style={{ ...wrap, padding:"14px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:700, color:"#e6b34a" }}>
+        {note.author ? `From ${note.author}` : "For our leaders"} · {timeAgo(note.at)}
+      </div>
+      {note.title && <div style={{ fontSize:17, fontWeight:800, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif", lineHeight:1.25 }}>{note.title}</div>}
+      {note.verseRef && <div style={{ fontSize:12.5, color:"#e6b34a", fontWeight:700 }}>{note.verseRef}</div>}
+      {note.body && (
+        <p style={{ margin:0, fontSize:14, color:"#e6e3dc", lineHeight:1.55, whiteSpace:"pre-wrap" }}>
+          {long && !open ? note.body.slice(0, 260).trimEnd() + "…" : note.body}
+        </p>
+      )}
+      <div style={{ display:"flex", gap:14, alignItems:"center" }}>
+        {long && !open && <button onClick={() => setOpen(true)} style={{ background:"none", border:"none", padding:0, color:"#e6b34a", fontSize:13, fontWeight:600, cursor:"pointer" }}>Read more</button>}
+        <button onClick={() => { lsSet(DEVO_SEEN_KEY, note.id); setSeen(note.id); setOpen(false); }} style={{ marginLeft:"auto", background:"none", border:`1px solid ${C.border}`, color:C.muted, borderRadius:8, padding:"6px 12px", fontSize:12.5, cursor:"pointer" }}>Got it</button>
+      </div>
+    </div>
+  );
+}
+
+function DevotionalEditor() {
+  const [current, setCurrent] = React.useState(null);
+  const [title, setTitle] = React.useState("");
+  const [body, setBody] = React.useState("");
+  const [verseRef, setVerseRef] = React.useState("");
+  const [author, setAuthor] = React.useState(() => lsGet("lp-devo-author") || "");
+  const [notify, setNotify] = React.useState(true);
+  const [msg, setMsg] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    fetch("/api/data?key=devotional", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(setCurrent).catch(() => {});
+  }, []);
+  async function publish() {
+    if (!title.trim() && !body.trim()) { setMsg("Add a title or a note."); return; }
+    setBusy(true); setMsg("");
+    try {
+      const res = await fetch("/api/data?key=devotional", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, body, verseRef, author }) });
+      const d = await res.json();
+      if (!res.ok || !d.ok) throw new Error(d.error || "Couldn’t publish.");
+      lsSet("lp-devo-author", author.trim() || null);
+      setCurrent(d.devotional); setTitle(""); setBody(""); setVerseRef("");
+      let sent = "";
+      if (notify) {
+        const r2 = await fetch("/api/push?action=broadcast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `${author.trim() ? author.trim() + ": " : ""}${d.devotional.title || "A note for leaders"}`, body: "Tap to read this week’s note in Let’s Pray." }) }).then(r => r.json()).catch(() => null);
+        if (r2 && r2.ok) sent = ` Sent a notification to ${r2.sent} leader${r2.sent === 1 ? "" : "s"}.`;
+      }
+      setMsg("Published. Leaders see it at the top of the Pray tab." + sent);
+      window.dispatchEvent(new Event("lp-devo-updated"));
+    } catch (e) { setMsg(e.message || "Couldn’t publish."); }
+    setBusy(false);
+  }
+  async function removeNote() {
+    await fetch("/api/data?key=devotional", { method: "POST", headers: { "Content-Type": "application/json" }, body: "null" }).catch(() => {});
+    setCurrent(null); setMsg("Removed."); window.dispatchEvent(new Event("lp-devo-updated"));
+  }
+  const field = { ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:13.5 };
+  const lbl = { fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, margin:"0 0 4px", display:"block" };
+  return (
+    <div style={S.importWrap}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}><BookOpen size={16} color="#e6b34a" /><p style={{ ...S.reportTitle, margin:0, color:"#e6b34a" }}>Leader Note</p></div>
+      <p style={{ margin:"0 0 14px", fontSize:12.5, color:C.muted, lineHeight:1.5 }}>A short devotional or encouragement for your leaders. It shows at the top of their Pray tab until you post the next one.</p>
+      {current && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11, color:C.muted, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600 }}>Showing now</div>
+          <LeaderNote note={{ ...current, id: "preview-" + current.id }} />
+          <button onClick={removeNote} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", padding:0 }}>Remove this note</button>
+        </div>
+      )}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+        <div><label style={lbl} htmlFor="devo-author">From</label><input id="devo-author" value={author} onChange={e => setAuthor(e.target.value)} placeholder="e.g. Pastor Scott" style={field} /></div>
+        <div><label style={lbl} htmlFor="devo-title">Title</label><input id="devo-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. You’re not too busy to pray" style={field} /></div>
+        <div><label style={lbl} htmlFor="devo-verse">Verse (optional)</label><input id="devo-verse" value={verseRef} onChange={e => setVerseRef(e.target.value)} placeholder="e.g. Colossians 4:2" style={field} /></div>
+        <div><label style={lbl} htmlFor="devo-body">Note</label><textarea id="devo-body" value={body} onChange={e => setBody(e.target.value)} rows={7} placeholder="Write a few sentences of encouragement for your team this week." style={{ ...field, resize:"vertical", lineHeight:1.5 }} /></div>
+        <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:C.cream, cursor:"pointer" }}>
+          <input type="checkbox" checked={notify} onChange={e => setNotify(e.target.checked)} style={{ accentColor:C.accent, width:15, height:15 }} />
+          Notify leaders who have reminders on
+        </label>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={publish} disabled={busy} style={{ ...S.confirmBtn, opacity: busy ? 0.6 : 1 }}>{busy ? "Publishing…" : current ? "Publish new note" : "Publish note"}</button>
+          {msg && <span style={{ fontSize:12.5, color: /Couldn|Add a/.test(msg) ? "#e07a5f" : C.accentLight, lineHeight:1.4 }}>{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Group Gospel tracker (students see totals only) ── */
 function GospelTracker({ compact }) {
   const [st, setSt] = React.useState(null);
@@ -1254,7 +2058,7 @@ function GospelTracker({ compact }) {
       </div>
       {st.goal > 0 && (
         <div style={{ height:10, background:"#2b2d31", borderRadius:5, overflow:"hidden" }}>
-          <div style={{ height:"100%", width:`${pct}%`, background:"linear-gradient(90deg, #3c58a7, #5aba47 55%, #e95e24)", borderRadius:5, transition:"width 0.8s ease" }} />
+          <div style={{ height:"100%", width:`${pct}%`, background:"linear-gradient(90deg, #3d59a8, #4cad3b 55%, #e95e24)", borderRadius:5, transition:"width 0.8s ease" }} />
         </div>
       )}
       <p style={{ margin:"8px 0 0", fontSize:13, color:"#80848a", lineHeight:1.45 }}>
@@ -1300,21 +2104,145 @@ function PrayerWall() {
       {posts.length === 0 && <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"24px 0" }}>No requests on the wall right now.</p>}
       {posts.map(p => {
         const done = mine[p.id] === localDay();
+        const happy = p.praise || p.answered;
         return (
-          <div key={p.id} style={{ background:"#1f2023", border:"1px solid #34363a", borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:10 }}>
+          <div key={p.id} style={{ background: happy ? "#18241a" : "#1f2023", border:`1px solid ${happy ? "#4cad3b66" : "#34363a"}`, borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:10 }}>
+            {happy && <div style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:800, color:"#74c464" }}>{p.praise ? "🎉 Praise report" : "🎉 Prayer answered!"}</div>}
             <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
               <span style={{ fontSize:15, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
               <span style={{ marginLeft:"auto", fontSize:12, color:"#80848a" }}>{timeAgo(p.createdAt)}</span>
             </div>
-            <p style={{ margin:0, fontSize:15, color:"#f2f1ee", lineHeight:1.5, whiteSpace:"pre-wrap" }}>{p.text}</p>
-            <button onClick={() => pray(p.id)} disabled={done}
-              style={{ alignSelf:"flex-start", display:"flex", alignItems:"center", gap:8, padding:"9px 14px", borderRadius:20, border:`1px solid ${done ? "#5aba47" : "#e95e24"}`, background: done ? "#18241a" : "#e95e24", color:"#fff", fontSize:14, fontWeight:700, cursor: done ? "default" : "pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+            <p style={{ margin:0, fontSize:15, color: p.answered ? "#a9ada9" : "#f2f1ee", lineHeight:1.5, whiteSpace:"pre-wrap" }}>{p.text}</p>
+            {p.answered && p.answered.update && <p style={{ margin:0, fontSize:15, color:"#f2f1ee", lineHeight:1.5 }}><b style={{ color:"#74c464" }}>Update: </b>{p.answered.update}</p>}
+            {!p.praise && <button onClick={() => pray(p.id)} disabled={done}
+              style={{ alignSelf:"flex-start", display:"flex", alignItems:"center", gap:8, padding:"9px 14px", borderRadius:20, border:`1px solid ${done ? "#4cad3b" : "#e95e24"}`, background: done ? "#18241a" : "#e95e24", color:"#fff", fontSize:14, fontWeight:700, cursor: done ? "default" : "pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
               {done ? "✓ Prayed" : "🙏 I prayed"}
               <span style={{ fontWeight:500, opacity:0.85 }}>· {p.prayed}</span>
-            </button>
+            </button>}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ── Leader Wall: student wall + parent (family) wall, for signed-in leaders ── */
+const WALL_SEEN_KEY = "lp-wall-seen";
+const FAMILY_WALL_DAYS = 60;
+
+function familyWallItems(people) {
+  const cutoff = Date.now() - FAMILY_WALL_DAYS * 24 * 60 * 60 * 1000;
+  return people
+    .filter(p => p.active !== false)
+    .flatMap(p => (p.familyRequests || []).filter(f => (f.at || 0) >= cutoff).map(f => ({ ...f, personId: p.id, student: p.name })))
+    .sort((a, b) => b.at - a.at);
+}
+
+function LeaderWall({ studentPosts, onStudentPrayed, people, setPeople, goToPerson, isAdmin, initialTab }) {
+  const [tab, setTab] = React.useState(initialTab || "students");
+  const [mine, setMine] = React.useState(() => { try { return JSON.parse(lsGet(WALL_PRAYED_KEY) || "{}"); } catch (_e) { return {}; } });
+  const today = localDay();
+  const family = familyWallItems(people);
+
+  function markMine(key) {
+    const next = { ...mine, [key]: today };
+    setMine(next); lsSet(WALL_PRAYED_KEY, JSON.stringify(next));
+  }
+  function prayStudent(id) {
+    if (mine[id] === today) return;
+    markMine(id);
+    onStudentPrayed(id);
+  }
+  function prayFamily(item) {
+    const key = `fam:${item.id}`;
+    if (mine[key] === today) return;
+    markMine(key);
+    setPeople(prev => prev.map(p => p.id !== item.personId ? p : {
+      ...p,
+      familyRequests: (p.familyRequests || []).map(f => f.id === item.id ? { ...f, prayed: (f.prayed || 0) + 1 } : f),
+      updatedAt: Date.now(),
+    }));
+  }
+
+  const seg = on => ({ flex:1, padding:"9px 0", borderRadius:9, border:"none", background: on ? C.accent : "none", color: on ? "#101112" : C.muted, fontWeight: on ? 700 : 500, fontSize:13.5, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  const card = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:9 };
+  const prayBtn = (done, count, onClick) => (
+    <button onClick={onClick} disabled={done}
+      style={{ alignSelf:"flex-start", display:"flex", alignItems:"center", gap:8, padding:"8px 13px", borderRadius:20, border:`1px solid ${done ? C.accent : C.orange}`, background: done ? C.accentBg : C.orange, color:"#fff", fontSize:13.5, fontWeight:700, cursor: done ? "default" : "pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+      {done ? "✓ Prayed" : "🙏 I prayed"}<span style={{ fontWeight:500, opacity:0.85 }}>· {count}</span>
+    </button>
+  );
+
+  return (
+    <div style={S.importWrap}>
+      <div style={{ display:"flex", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:4, gap:4, marginBottom:14 }}>
+        <button onClick={() => setTab("students")} style={seg(tab === "students")}>Students{studentPosts.filter(p => !p.praise && !p.answered).length ? ` · ${studentPosts.filter(p => !p.praise && !p.answered).length}` : ""}</button>
+        <button onClick={() => setTab("parents")} style={seg(tab === "parents")}>Parents{family.length ? ` · ${family.length}` : ""}</button>
+        <button onClick={() => setTab("answered")} style={seg(tab === "answered")}>Answered 🎉</button>
+      </div>
+
+      {tab === "answered" ? (() => {
+        const cutoff = Date.now() - 90 * 864e5;
+        const items = [
+          ...people.filter(p => p.active !== false).flatMap(p => (p.answered || []).filter(a => (a.at || 0) >= cutoff).map(a => ({ key: a.id, who: p.name, personId: p.id, request: a.text, update: a.update, at: a.at, by: a.by }))),
+          ...studentPosts.filter(p => p.praise || p.answered).map(p => ({ key: "w" + p.id, who: p.name, request: p.praise ? "" : p.text, update: p.praise ? p.text : (p.answered.update || ""), at: p.praise ? p.createdAt : p.answered.at, by: "wall" })),
+        ].sort((a, b) => b.at - a.at);
+        return (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <p style={{ margin:"0 0 2px", fontSize:12.5, color:C.muted, textAlign:"center", lineHeight:1.5 }}>Answered prayers and praise reports from the last 90 days. Great to share at youth night.</p>
+            {items.length === 0 && <p style={S.reportEmpty}>Nothing yet. Tap ✓ on a prayer request when God answers it.</p>}
+            {items.map(it => (
+              <div key={it.key} style={{ ...card, background:C.accentBg, borderColor:`${C.accent}55` }}>
+                <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
+                  {it.personId
+                    ? <button onClick={() => goToPerson(it.personId)} style={{ background:"none", border:"none", padding:0, color:C.cream, fontSize:14.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{it.who}</button>
+                    : <span style={{ fontSize:14.5, fontWeight:700, color:C.cream }}>{it.who}</span>}
+                  <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>{timeAgo(it.at)}</span>
+                </div>
+                {it.request && <p style={{ margin:0, fontSize:13.5, color:C.muted, lineHeight:1.45 }}>Prayed for: {it.request}</p>}
+                {it.update && <p style={{ margin:0, fontSize:14.5, color:C.cream, lineHeight:1.5 }}>🎉 {it.update}</p>}
+                {!it.update && <p style={{ margin:0, fontSize:14.5, color:C.accentLight }}>🎉 Answered!</p>}
+              </div>
+            ))}
+          </div>
+        );
+      })() : tab === "students" ? (
+        <div style={{ display:"flex", flexDirection:"column", gap:10, alignItems:"center" }}>
+          <GospelTracker compact />
+          <p style={{ margin:"4px 0 2px", fontSize:12.5, color:C.muted, textAlign:"center", lineHeight:1.5 }}>What students shared on their Prayer Wall. Your 🙏 adds to the count they see.</p>
+          {studentPosts.length === 0 && <p style={S.reportEmpty}>No student requests on the wall right now.</p>}
+          {studentPosts.filter(p => !p.praise && !p.answered).map(p => (
+            <div key={p.id} style={{ ...card, width:"100%", boxSizing:"border-box" }}>
+              <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+                <span style={{ fontSize:15, fontWeight:700, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
+                <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>{timeAgo(p.createdAt)}</span>
+              </div>
+              <p style={{ margin:0, fontSize:14.5, color:C.cream, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{p.text}</p>
+              {prayBtn(mine[p.id] === today, p.prayed, () => prayStudent(p.id))}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          <p style={{ margin:"0 0 2px", fontSize:12.5, color:C.muted, textAlign:"center", lineHeight:1.5 }}>
+            Family requests parents shared with our leaders (last {FAMILY_WALL_DAYS} days).{isAdmin ? " Confidential ones stay in your Inbox." : ""}
+          </p>
+          {family.length === 0 && <p style={S.reportEmpty}>No family requests right now.</p>}
+          {family.map(f => (
+            <div key={f.id} style={{ ...card, borderColor:"#b49ad033" }}>
+              <div style={{ display:"flex", alignItems:"baseline", gap:6, flexWrap:"wrap" }}>
+                <span style={{ fontSize:14.5, fontWeight:700, color:C.cream }}>{f.from}</span>
+                <span style={{ fontSize:12.5, color:C.muted }}>for</span>
+                <button onClick={() => goToPerson(f.personId)} style={{ background:"none", border:"none", padding:0, color:"#b49ad0", fontSize:13.5, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{f.student}</button>
+                <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>{timeAgo(f.at)}</span>
+              </div>
+              <p style={{ margin:0, fontSize:14.5, color:C.cream, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{f.text}</p>
+              {f.dontMention && <span style={{ alignSelf:"flex-start", fontSize:12, fontWeight:600, color:C.orange, background:"#2a1a12", borderRadius:8, padding:"3px 9px" }}>Please don’t mention this to {f.student.split(" ")[0]}</span>}
+              {prayBtn(mine[`fam:${f.id}`] === today, f.prayed || 0, () => prayFamily(f))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1330,6 +2258,8 @@ const PARENT_KIDS_KEY = "lp-parent-kids";
 
 export function ParentPage() {
   const [info, setInfo] = React.useState(null);
+  const [series] = useSeries(info && info.role);
+  const [events] = useEvents(info && info.role);
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -1376,8 +2306,9 @@ export function ParentPage() {
   const header = (
     <>
       <img src="/logo.png" alt={info?.name || ""} style={{ width: 210, height: "auto", marginBottom: 10 }} />
+      <AppWordmark small />
       <p style={{ fontSize:12, color:"#80848a", margin:"0 0 6px", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>For parents</p>
-      <p style={{ fontSize:14, color:"#80848a", margin:"0 0 22px", textAlign:"center", maxWidth:320, lineHeight:1.5 }}>Share how our leaders can pray for your family.</p>
+      <p style={{ fontSize:14, color:"#80848a", margin:"0 0 22px", textAlign:"center", maxWidth:320, lineHeight:1.5 }}>Talk about this week’s message with your student, and share how our leaders can pray for your family.</p>
     </>
   );
   const signedIn = info && (info.role === "parent" || info.role === "team" || info.role === "admin");
@@ -1401,7 +2332,7 @@ export function ParentPage() {
     <div style={authWrap}>
       {header}
       <div style={{ ...card, alignItems:"center", textAlign:"center" }}>
-        <Heart size={40} color="#5aba47" fill="#5aba47" />
+        <Heart size={40} color="#4cad3b" fill="#4cad3b" />
         <p style={{ color:"#f2f1ee", fontSize:20, fontWeight:700, fontFamily:"'Montserrat', system-ui, sans-serif", margin:"8px 0 0" }}>Thank you for trusting us with this.</p>
         <p style={{ color:"#80848a", fontSize:14, margin:0, lineHeight:1.5 }}>Our team will be praying for your family.</p>
         <button onClick={() => setDone(false)} style={{ ...authBtn, padding:"12px 28px", marginTop:12 }}>Share another request</button>
@@ -1410,21 +2341,24 @@ export function ParentPage() {
   );
 
   const option = (v, title, sub) => (
-    <button onClick={() => setPrivacy(v)} aria-pressed={privacy === v} style={{ textAlign:"left", padding:"12px 14px", borderRadius:10, border:`1px solid ${privacy === v ? "#5aba47" : "#34363a"}`, background: privacy === v ? "#18241a" : "#1f2023", cursor:"pointer", display:"flex", gap:10, alignItems:"flex-start" }}>
-      <span style={{ width:18, height:18, borderRadius:"50%", border:`2px solid ${privacy === v ? "#5aba47" : "#4a4d52"}`, flexShrink:0, marginTop:1, display:"flex", alignItems:"center", justifyContent:"center" }}>{privacy === v && <span style={{ width:8, height:8, borderRadius:"50%", background:"#5aba47" }} />}</span>
+    <button onClick={() => setPrivacy(v)} aria-pressed={privacy === v} style={{ textAlign:"left", padding:"12px 14px", borderRadius:10, border:`1px solid ${privacy === v ? "#4cad3b" : "#34363a"}`, background: privacy === v ? "#18241a" : "#1f2023", cursor:"pointer", display:"flex", gap:10, alignItems:"flex-start" }}>
+      <span style={{ width:18, height:18, borderRadius:"50%", border:`2px solid ${privacy === v ? "#4cad3b" : "#4a4d52"}`, flexShrink:0, marginTop:1, display:"flex", alignItems:"center", justifyContent:"center" }}>{privacy === v && <span style={{ width:8, height:8, borderRadius:"50%", background:"#4cad3b" }} />}</span>
       <span><span style={{ display:"block", fontSize:14, fontWeight:600, color:"#f2f1ee" }}>{title}</span><span style={{ display:"block", fontSize:12.5, color:"#80848a", lineHeight:1.4, marginTop:2 }}>{sub}</span></span>
     </button>
   );
   const check = (checked, set, label, sub) => (
     <label style={{ display:"flex", gap:10, alignItems:"flex-start", cursor:"pointer", fontSize:14, color:"#f2f1ee", lineHeight:1.4 }}>
-      <input type="checkbox" checked={checked} onChange={e => set(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#5aba47", flexShrink:0 }} />
+      <input type="checkbox" checked={checked} onChange={e => set(e.target.checked)} style={{ marginTop:3, width:17, height:17, accentColor:"#4cad3b", flexShrink:0 }} />
       <span>{label}{sub && <><br /><span style={{ fontSize:12, color:"#80848a" }}>{sub}</span></>}</span>
     </label>
   );
   return (
     <div style={{ ...authWrap, justifyContent:"flex-start", paddingTop:48 }}>
       {header}
+      <SeriesCard series={series} mode="parent" />
+      <EventCards events={events} mode="parent" />
       <div style={card}>
+        <p style={{ margin:"4px 0 0", fontSize:12, color:"#80848a", textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:700 }}>Share a prayer request</p>
         <div><label style={authLbl}>Your name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="First and last name" style={authInp} autoComplete="name" /></div>
         <div><label style={authLbl}>Your student(s) in IMPACT</label><input value={kids} onChange={e => setKids(e.target.value)} placeholder="e.g. Ethan Brooks" style={authInp} /></div>
         <div>
@@ -1442,7 +2376,7 @@ export function ParentPage() {
           {followUp && <input value={contact} onChange={e => setContact(e.target.value)} placeholder="Phone number or email" style={authInp} autoComplete="tel" />}
         </div>
         {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0 }}>{err}</p>}
-        <button onClick={submit} disabled={busy} style={{ ...authBtn, background:"#e95e24", opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Send size={15} /> {busy ? "Sending…" : "Send to our leaders"}</button>
+        <button onClick={submit} disabled={busy} style={{ ...authBtn, background:"#e95e24", color:"#fff", opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Send size={15} /> {busy ? "Sending…" : "Send to our leaders"}</button>
         <p style={{ fontSize:12, color:"#5c6066", margin:"4px 0 24px", textAlign:"center", lineHeight:1.5 }}>Our student ministry staff reads every request before it’s shared with leaders.</p>
       </div>
     </div>
@@ -1499,9 +2433,17 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
     fetch("/api/wall").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setWall(l)).catch(() => {});
   }, []);
   React.useEffect(() => { loadWall(); }, [loadWall]);
-  async function postToWall(name, text) {
-    await fetch("/api/wall?action=post", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, text }) }).catch(() => {});
+  async function postToWall(name, text, extra = {}) {
+    await fetch("/api/wall?action=post", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, text, ...extra }) }).catch(() => {});
     loadWall();
+  }
+  const [answerFor, setAnswerFor] = React.useState(null);
+  const [answerText, setAnswerText] = React.useState("");
+  async function answerOnWall(id) {
+    const update = answerText.trim();
+    setWall(prev => prev.map(p => p.id === id ? { ...p, answered: { update, at: Date.now() } } : p));
+    setAnswerFor(null); setAnswerText("");
+    await fetch("/api/wall?action=answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, update }) }).catch(() => {});
   }
   async function removeFromWall(id) {
     setWall(prev => prev.filter(p => p.id !== id));
@@ -1555,12 +2497,14 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
         }
         return { ...p, causeCircle, gospelLog: [entry, ...(p.gospelLog || [])], updatedAt: Date.now() };
       }
-      if (item.kind === "request") return { ...p, prayerRequests: [...(p.prayerRequests || []), text], updatedAt: Date.now() };
+      if (item.kind === "request") return { ...p, prayerRequests: [...(p.prayerRequests || []), text], reqTimes: [item.createdAt || Date.now(), ...(p.reqTimes || [])].slice(0, 60), updatedAt: Date.now() };
+      if (item.kind === "praise") return { ...p, answered: [{ id: genId(), text: "", update: text, at: item.createdAt || Date.now(), by: "student" }, ...(p.answered || [])], updatedAt: Date.now() };
       const have = new Set((p.causeCircle || []).map(f => normName(f.name)));
       const add = friends.filter(f => !have.has(normName(f))).map(f => ({ id: genId(), name: f, shared: false }));
       return { ...p, causeCircle: [...(p.causeCircle || []), ...add], updatedAt: Date.now() };
     };
-    const apply = p => applyContent(withInfo(p));
+    // Remember the student's device so leaders' prayers can notify them
+    const apply = p => { const next = applyContent(withInfo(p)); return item.notifyId ? { ...next, notifyId: item.notifyId } : next; };
     const usePhoto = item.hasPhoto && !skipPhoto[item.id];
     const attachPhoto = personId => {
       if (!usePhoto) return Promise.resolve();
@@ -1577,7 +2521,8 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
       setPeople(prev => prev.map(p => p.id === chosen ? apply(p) : p));
       await attachPhoto(chosen);
     } else return;
-    if (item.kind === "request" && item.share && !skipWall[item.id] && text) postToWall(wallName(item), text);
+    if (item.kind === "request" && item.share && !skipWall[item.id] && text) postToWall(wallName(item), text, { notifyId: item.notifyId || undefined });
+    if (item.kind === "praise" && item.praise && item.praise.share && !skipWall[item.id] && text) postToWall(wallName({ ...item, anonymous: item.praise.anonymous }), text, { praise: true });
     onRemove([item.id]);
   }
 
@@ -1593,7 +2538,7 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
         {items.slice().sort((a, b) => a.createdAt - b.createdAt).map(item => {
           const chosen = match[item.id] ?? guessPerson(matchName(item), choices);
-          const value = edits[item.id] ?? (item.kind === "request" || item.kind === "gospel" || item.kind === "parent" ? item.text : (item.friends || []).join(", "));
+          const value = edits[item.id] ?? (item.kind === "request" || item.kind === "gospel" || item.kind === "parent" || item.kind === "praise" ? item.text : (item.friends || []).join(", "));
           const isParent = item.kind === "parent";
           const pi = item.parent || {};
           const privacy = privacyFor[item.id] || pi.privacy || "leaders";
@@ -1602,7 +2547,7 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
             <div key={item.id} style={box}>
               <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
                 <span style={{ fontSize:14, color:C.cream, fontWeight:600 }}>{item.name}</span>
-                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : item.kind === "gospel" ? { background:"#2a1a12", color:C.orange } : isParent ? { background:"#2a2433", color:"#b49ad0" } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : item.kind === "gospel" ? "Gospel conversation" : isParent ? "Parent request" : "Prayer request"}</span>
+                <span style={{ ...S.badgeSm, ...(item.kind === "cause" ? { background:C.accentBg, color:C.accentLight } : item.kind === "info" ? { background:C.studentBg, color:C.student } : item.kind === "gospel" ? { background:"#2a1a12", color:C.orange } : isParent ? { background:"#2a2433", color:"#b49ad0" } : { background:C.faint, color:C.muted }) }}>{item.kind === "cause" ? "CAUSE Circle" : item.kind === "info" ? (item.grade || item.birthday ? "Roster info" : "Photo") : item.kind === "gospel" ? "Gospel conversation" : isParent ? "Parent request" : item.kind === "praise" ? "Praise report 🎉" : "Prayer request"}</span>
                 <span style={{ marginLeft:"auto", fontSize:11, color:C.muted }}>{timeAgo(item.createdAt)}</span>
               </div>
               {isParent && (
@@ -1642,6 +2587,13 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
                   </label>
                 </div>
               )}
+              {item.kind === "praise" && item.praise && item.praise.share && (
+                <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer", lineHeight:1.45 }}>
+                  <input type="checkbox" checked={!skipWall[item.id]} onChange={e => setSkipWall(prev => ({ ...prev, [item.id]: !e.target.checked }))} style={{ marginTop:2, accentColor:C.accent }} />
+                  <span>Also post this praise on the student Prayer Wall as <b>{wallName({ ...item, anonymous: item.praise.anonymous })}</b></span>
+                </label>
+              )}
+              {item.notifyId && <div style={{ fontSize:12, color:C.muted }}>🔔 This student will be notified when leaders pray for them.</div>}
               {item.kind === "request" && item.share && (
                 <label style={{ display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:C.cream, cursor:"pointer", lineHeight:1.45 }}>
                   <input type="checkbox" checked={!skipWall[item.id]} onChange={e => setSkipWall(prev => ({ ...prev, [item.id]: !e.target.checked }))} style={{ marginTop:2, accentColor:C.orange }} />
@@ -1721,9 +2673,19 @@ function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentC
           <div key={p.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 12px", display:"flex", gap:10, alignItems:"flex-start" }}>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontSize:13, color:C.cream, fontWeight:600 }}>{p.name} <span style={{ fontWeight:400, color:C.muted, fontSize:12 }}>· {timeAgo(p.createdAt)} · 🙏 {p.prayed}</span></div>
-              <div style={{ fontSize:13, color:C.muted, marginTop:3, lineHeight:1.4 }}>{p.text}</div>
+              <div style={{ fontSize:13, color:C.muted, marginTop:3, lineHeight:1.4 }}>{p.praise && <b style={{ color:C.accentLight }}>Praise: </b>}{p.text}</div>
+              {p.answered && <div style={{ fontSize:12.5, color:C.accentLight, marginTop:4 }}>🎉 Answered{p.answered.update ? `: ${p.answered.update}` : ""}</div>}
+              {answerFor === p.id && (
+                <div style={{ ...S.reqInputRow, marginTop:6 }}>
+                  <input autoFocus value={answerText} onChange={e => setAnswerText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") answerOnWall(p.id); if (e.key === "Escape") setAnswerFor(null); }} placeholder="What happened? (optional)" style={S.reqInput} />
+                  <button onClick={() => answerOnWall(p.id)} style={S.reqAddBtn}>Save</button>
+                </div>
+              )}
             </div>
-            <button onClick={() => removeFromWall(p.id)} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12, flexShrink:0 }}>Remove</button>
+            <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+              {!p.praise && !p.answered && answerFor !== p.id && <button onClick={() => { setAnswerFor(p.id); setAnswerText(""); }} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12, color:C.accentLight }}>Answered</button>}
+              <button onClick={() => removeFromWall(p.id)} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12 }}>Remove</button>
+            </div>
           </div>
         ))}
       </div>
@@ -1908,6 +2870,8 @@ export default function App() {
   );
   if (!status) return <LoadingScreen />;
   if (!status.configured) return <SetupScreen onComplete={setStatus} />;
+  if (status.role === "student" && !window.__LP_DEMO) return <StudentPage />;
+  if (status.role === "parent" && !window.__LP_DEMO) return <ParentPage />;
   if (!status.role || status.role === "student" || status.role === "parent") return <LockScreen status={status} onSignedIn={setStatus} />;
   return <AppMain settings={status} role={status.role} onStatus={setStatus} />;
 }
@@ -1960,6 +2924,8 @@ function AppMain({ settings, role, onStatus }) {
   const [bdayInput, setBdayInput] = useState("");
 
   // Prayer requests
+  const [answeringReq, setAnsweringReq] = useState(null);
+  const [answerUpdate, setAnswerUpdate] = useState("");
   const [reqFor, setReqFor] = useState(null);
   const [reqText, setReqText] = useState("");
 
@@ -2015,7 +2981,7 @@ function AppMain({ settings, role, onStatus }) {
   @keyframes flyInLeft   { from { transform: translateX(110%)  rotate(6deg);  opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes flyInRight  { from { transform: translateX(-110%) rotate(-6deg); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes confettiFall { 0% { transform: translateY(-20px) rotate(0deg); opacity: 1; } 100% { transform: translateY(100vh) rotate(720deg); opacity: 0; } }
-  @keyframes celebPulse { 0%,100%{transform:scale(1) filter:drop-shadow(0 0 0px #5aba47)} 50%{transform:scale(1.1) filter:drop-shadow(0 0 12px #5aba47)} }
+  @keyframes celebPulse { 0%,100%{transform:scale(1) filter:drop-shadow(0 0 0px #4cad3b)} 50%{transform:scale(1.1) filter:drop-shadow(0 0 12px #4cad3b)} }
   @keyframes bdayGlow { 0%,100%{box-shadow:0 0 8px 2px rgba(255,255,255,0.2), 0 0 0 0 rgba(255,255,255,0)} 50%{box-shadow:0 0 18px 6px rgba(255,255,255,0.35), 0 0 32px 12px rgba(255,255,255,0.1)} }
   @keyframes bdaySpin { 0%{transform:rotate(-8deg) scale(1.08)} 50%{transform:rotate(8deg) scale(1.15)} 100%{transform:rotate(-8deg) scale(1.08)} }
 `;
@@ -2026,6 +2992,47 @@ function AppMain({ settings, role, onStatus }) {
   useEffect(() => {
     if (groupsLoaded && myGroupId && !smallGroups.some(g => g.id === myGroupId)) setMyGroup("");
   }, [groupsLoaded, smallGroups, myGroupId]);
+
+  const [series] = useSeries();
+  const [devotional, setDevotional] = useState(null);
+  useEffect(() => {
+    const load = () => fetch("/api/data?key=devotional", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(setDevotional).catch(() => {});
+    load();
+    window.addEventListener("lp-devo-updated", load);
+    const t = setInterval(load, 10 * 60 * 1000);
+    return () => { window.removeEventListener("lp-devo-updated", load); clearInterval(t); };
+  }, []);
+  const [seriesPane, setSeriesPane] = useState("series");
+  const [events] = useEvents();
+  function prayThroughEvent(id) { setFilter(`ev:${id}`); setCardIdx(0); window.scrollTo(0, 0); }
+
+  // Prayer walls for leaders: student posts from the server, family requests from the roster
+  const [studentWall, setStudentWall] = useState([]);
+  const [wallSeen, setWallSeen] = useState(() => Number(lsGet(WALL_SEEN_KEY)) || 0);
+  const [wallTab, setWallTab] = useState("students");
+  useEffect(() => {
+    const load = () => fetch("/api/wall").then(r => r.ok ? r.json() : []).then(l => Array.isArray(l) && setStudentWall(l)).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, []);
+  function prayStudentPost(id) {
+    setStudentWall(prev => prev.map(p => p.id === id ? { ...p, prayed: p.prayed + 1 } : p));
+    fetch("/api/wall?action=pray", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => {});
+  }
+  const newStudentPosts = studentWall.filter(p => p.createdAt > wallSeen).length;
+  const newFamily = familyWallItems(people).filter(f => (f.at || 0) > wallSeen).length;
+  const wallNew = newStudentPosts + newFamily;
+  function openWall(t) {
+    if (t) setWallTab(t);
+    setView("wall");
+  }
+  useEffect(() => {
+    if (view !== "wall") return;
+    const now = Date.now();
+    // Mark as seen when they leave the Wall, so the "new" counts stay visible while reading
+    return () => { lsSet(WALL_SEEN_KEY, String(now)); setWallSeen(now); };
+  }, [view]);
 
   // Student inbox (admins only)
   const loadInbox = useCallback(() => {
@@ -2156,12 +3163,12 @@ function AppMain({ settings, role, onStatus }) {
   const activePeople = people.filter(p => p.active !== false);
 
   const getFiltered = useCallback(() => {
-    return activePeople.filter(p => matchesFilter(p, filter));
+    return activePeople.filter(p => matchesFilter(p, filter, events));
   }, [people, filter]);
 
   const buildDeck = useCallback((filterOverride) => {
     const f = filterOverride ?? filter;
-    const list = activePeople.filter(p => matchesFilter(p, f));
+    const list = activePeople.filter(p => matchesFilter(p, f, events));
     // Always exclude prayed-this-week from swipe deck
     const unprayed = list.filter(p => !withinWeek(p.prayedAt));
     const shuffled = shuffle(unprayed.map(p => p.id));
@@ -2331,6 +3338,7 @@ function AppMain({ settings, role, onStatus }) {
       return { ...p, prayedAt: Date.now(), prayedWeek: weekStart, prayedWeekDate: weekDateStr, prayCount: (p.prayCount || 0) + 1, weekPrayCount: inSameWeek ? (p.weekPrayCount || 1) + 1 : 1, updatedAt: Date.now() };
     }));
     if (current?.id) dismissBday(current.id);
+    if (current?.notifyId) fetch("/api/push?action=prayed", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ personId: current.id }) }).catch(() => {});
     recordMyPrayerDay();
     setPinnedPersonId(null);
     setKeepPrayingMode(false); // return to celebration screen after Pray Again
@@ -2443,8 +3451,20 @@ function AppMain({ settings, role, onStatus }) {
 
   function addRequest(personId) {
     if (!reqText.trim()) return;
-    setPeople(prev => prev.map(p => p.id === personId ? { ...p, prayerRequests: [...(p.prayerRequests || []), reqText.trim()], updatedAt: Date.now() } : p));
+    setPeople(prev => prev.map(p => p.id === personId ? { ...p, prayerRequests: [...(p.prayerRequests || []), reqText.trim()], reqTimes: [Date.now(), ...(p.reqTimes || [])].slice(0, 60), updatedAt: Date.now() } : p));
     setReqText(""); setReqFor(null);
+  }
+
+  // Move a request into the person's "Answered" list, with an optional update
+  function markAnswered(personId, idx) {
+    const update = answerUpdate.trim();
+    setPeople(prev => prev.map(p => {
+      if (p.id !== personId) return p;
+      const text = (p.prayerRequests || [])[idx];
+      if (text === undefined) return p;
+      return { ...p, prayerRequests: p.prayerRequests.filter((_, i) => i !== idx), answered: [{ id: genId(), text, update, at: Date.now(), by: "leader" }, ...(p.answered || [])], updatedAt: Date.now() };
+    }));
+    setAnsweringReq(null); setAnswerUpdate("");
   }
 
   function removeRequest(personId, idx) {
@@ -2640,7 +3660,10 @@ function AppMain({ settings, role, onStatus }) {
       <header style={S.header}>
         <div style={S.logoWrap}>
           <img src="/logo.png" alt={MINISTRY_NAME} style={{ height: 40, width: "auto", display: "block" }} />
-          {MINISTRY_SUB && <span style={{ ...S.logoSub, borderLeft: `1px solid ${C.border}`, paddingLeft: 10, marginLeft: 2 }}>{MINISTRY_SUB}</span>}
+          <span style={S.appName}>
+            <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true" style={{ flexShrink:0 }}><path d="M10,1 C10.6,7.4 12.6,9.4 19,10 C12.6,10.6 10.6,12.6 10,19 C9.4,12.6 7.4,10.6 1,10 C7.4,9.4 9.4,7.4 10,1 Z" fill="#ffffff" /></svg>
+            Let’s Pray
+          </span>
         </div>
         <div style={{ ...S.weekBar, cursor: "pointer" }} onClick={() => setView("week")}>
           <Heart size={13} color={C.accent} fill={C.accent} />
@@ -2656,10 +3679,13 @@ function AppMain({ settings, role, onStatus }) {
 
       {/* Tabs */}
       <nav style={S.tabs}>
-        {[["pray","Pray"],["week","Week"],["roster","Roster"]].map(([v, label]) => (
-          <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}) }}>{label}</button>
+        {[["pray","Pray"],["wall","Wall"],["week","Week"],["roster","Roster"]].map(([v, label]) => (
+          <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
+            {label}
+            {v === "wall" && wallNew > 0 && view !== "wall" && <span style={S.tabBadge}>{wallNew}</span>}
+          </button>
         ))}
-        {adminAuthed && [["inbox","Inbox"],["people","People"],["report","Report"],["import","Import"]].map(([v, label]) => (
+        {adminAuthed && [["inbox","Inbox"],["series","Teach"],["people","People"],["report","Report"],["import","Import"]].map(([v, label]) => (
           <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
             {label}
             {v === "inbox" && submissions.length > 0 && <span style={S.tabBadge}>{submissions.length}</span>}
@@ -2693,6 +3719,19 @@ function AppMain({ settings, role, onStatus }) {
       {/* ─── PRAY ─── */}
       {view === "pray" && (
         <div style={S.prayWrap}>
+          <LeaderNote note={devotional} />
+          <SeriesCard series={series} mode="leader" />
+          <EventCards events={events} mode="leader" onPrayThrough={prayThroughEvent} />
+          <CheckInCard people={people} myGroupId={myGroupId} groupName={groupName} isAdmin={adminAuthed} goToPerson={goToPerson} />
+          {wallNew > 0 && (
+            <button onClick={() => openWall(newStudentPosts ? "students" : "parents")} style={S.wallBanner}>
+              <Heart size={14} color={C.orange} fill={C.orange} style={{ flexShrink:0 }} />
+              <span style={{ flex:1, textAlign:"left" }}>
+                New on the Wall: {[newStudentPosts ? `${newStudentPosts} from students` : "", newFamily ? `${newFamily} from parents` : ""].filter(Boolean).join(" · ")}
+              </span>
+              <span style={{ color:C.orange, fontWeight:700 }}>View →</span>
+            </button>
+          )}
           {smallGroups.length > 0 && (
             <div style={S.myGroupRow}>
               {myGroupId && groupName(myGroupId) && !pickingGroup ? (
@@ -2730,6 +3769,11 @@ function AppMain({ settings, role, onStatus }) {
               <option value="hs-students">HS Students</option>
               <option value="leaders">Leaders</option>
               {people.some(p => p.staff && p.active !== false) && <option value="staff">Staff</option>}
+              {events.filter(e => eventStatus(e) && (e.attendees || []).length).length > 0 && (
+                <optgroup label="Events">
+                  {events.filter(e => eventStatus(e) && (e.attendees || []).length).map(e => <option key={e.id} value={`ev:${e.id}`}>{e.name} ({e.attendees.length})</option>)}
+                </optgroup>
+              )}
               {smallGroups.length > 0 && (
                 <optgroup label="Small Groups">
                   {smallGroups.map(g => <option key={g.id} value={`sg:${g.id}`}>{g.name}</option>)}
@@ -2782,7 +3826,7 @@ function AppMain({ settings, role, onStatus }) {
                   <div style={{ ...S.cardGhost, transform: "rotate(2deg) translateY(6px)", opacity: 0.35 }} />
                   <div style={{ ...S.cardGhost, transform: "rotate(-1.5deg) translateY(3px)", opacity: 0.55 }} />
                   <div style={{ ...S.card, ...S.tapCard }}>
-                    <svg width="52" height="52" viewBox="0 0 20 20" style={{ marginBottom: 12, flexShrink:0 }}><path d="M10,2 L11.768,8.232 L18,10 L11.768,11.768 L10,18 L8.232,11.768 L2,10 L8.232,8.232 Z" fill="#5aba47" /></svg>
+                    <svg width="52" height="52" viewBox="0 0 20 20" style={{ marginBottom: 12, flexShrink:0 }}><path d="M10,2 L11.768,8.232 L18,10 L11.768,11.768 L10,18 L8.232,11.768 L2,10 L8.232,8.232 Z" fill="#4cad3b" /></svg>
                     <h2 style={S.tapTitle}>Tap to Begin</h2>
                     <p style={S.tapSub}>{deck.length} {filter === "all" ? "people" : filter.startsWith("sg:") ? `in ${groupName(filter.slice(3)) || "this group"}` : filter.replace("-", " ")} ready</p>
                   </div>
@@ -2886,12 +3930,35 @@ function AppMain({ settings, role, onStatus }) {
                         <div style={S.reqBox}>
                           <p style={S.reqLabel}>Prayer Requests</p>
                           {current.prayerRequests.map((req, i) => (
-                            <div key={i} style={S.reqItem}>
-                              <span style={S.reqDot}>◆</span>
-                              <span style={S.reqText}>{req}</span>
-                              <button onClick={() => removeRequest(current.id, i)} style={S.reqRemove}><X size={11} /></button>
+                            <React.Fragment key={i}>
+                              <div style={S.reqItem}>
+                                <span style={S.reqDot}>◆</span>
+                                <span style={S.reqText}>{req}</span>
+                                <button onClick={() => { setAnsweringReq({ personId: current.id, idx: i }); setAnswerUpdate(""); }} style={{ ...S.reqRemove, color:C.accent }} title="Mark answered" aria-label="Mark answered"><Check size={12} strokeWidth={3} /></button>
+                                <button onClick={() => removeRequest(current.id, i)} style={S.reqRemove} title="Remove" aria-label="Remove request"><X size={11} /></button>
+                              </div>
+                              {answeringReq && answeringReq.personId === current.id && answeringReq.idx === i && (
+                                <div style={{ ...S.reqInputRow, margin:"0 0 8px 16px" }}>
+                                  <input autoFocus value={answerUpdate} onChange={e => setAnswerUpdate(e.target.value)} onKeyDown={e => { if (e.key === "Enter") markAnswered(current.id, i); if (e.key === "Escape") setAnsweringReq(null); }} placeholder="How did God answer? (optional)" style={S.reqInput} />
+                                  <button onClick={() => markAnswered(current.id, i)} style={S.reqAddBtn}>🎉 Answered</button>
+                                </div>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      )}
+                      {(current?.answered || []).length > 0 && (
+                        <div style={S.answeredBox}>
+                          <p style={{ ...S.reqLabel, color:C.accentLight }}>Answered 🎉</p>
+                          {current.answered.slice(0, 3).map(a => (
+                            <div key={a.id} style={{ fontSize:13, color:C.cream, lineHeight:1.45, marginBottom:6 }}>
+                              {a.text && <span style={{ color:C.muted, textDecoration:"line-through", textDecorationColor:"#4cad3b66" }}>{a.text}</span>}
+                              {a.text && a.update && <br />}
+                              {a.update && <span>{a.update}</span>}
+                              <span style={{ display:"block", fontSize:11, color:C.muted, marginTop:2 }}>{timeAgo(a.at)}{a.by === "student" ? " · shared by student" : ""}</span>
                             </div>
                           ))}
+                          {current.answered.length > 3 && <div style={{ fontSize:11.5, color:C.muted }}>+ {current.answered.length - 3} more</div>}
                         </div>
                       )}
 
@@ -3040,6 +4107,11 @@ function AppMain({ settings, role, onStatus }) {
         </div>
       )}
 
+      {/* ─── WALL ─── */}
+      {view === "wall" && (
+        <LeaderWall key={wallTab} initialTab={wallTab} studentPosts={studentWall} onStudentPrayed={prayStudentPost} people={people} setPeople={setPeople} goToPerson={goToPerson} isAdmin={adminAuthed} />
+      )}
+
       {/* ─── WEEK SUMMARY ─── */}
       {view === "week" && (
         <div style={S.weekWrap}>
@@ -3172,7 +4244,7 @@ function AppMain({ settings, role, onStatus }) {
                   ) : confirmDeleteGroup === g.id ? (
                     <>
                       <span style={{ flex:1, fontSize:12, color:C.muted }}>Delete “{g.name}”? People stay, just unassigned.</span>
-                      <button onClick={() => deleteSmallGroup(g.id)} style={{ ...S.reqAddBtn, background:"#8a5050" }}>Delete</button>
+                      <button onClick={() => deleteSmallGroup(g.id)} style={{ ...S.reqAddBtn, background:"#8a5050", color:"#fff" }}>Delete</button>
                       <button onClick={() => setConfirmDeleteGroup(null)} style={S.reqCancelBtn}><X size={12} /></button>
                     </>
                   ) : (
@@ -3284,7 +4356,7 @@ function AppMain({ settings, role, onStatus }) {
                   <div style={S.personActions}>
                     <button onClick={() => { setEditBdayFor(editBdayFor === p.id ? null : p.id); setBdayInput(p.birthday || ""); setEditNameFor(null); }}
                       style={{ ...S.iconBtn, color: p.birthday ? C.accent : C.muted }} title="Set birthday"><Cake size={13} /></button>
-                    <button onClick={() => cycleGroup(p.id)} style={{ ...S.iconBtn, width: p.group === "both" ? 44 : 30, color: p.group === "hs" ? "#8ea3e3" : p.group === "ms" ? "#7fd06c" : p.group === "both" ? C.cream : C.muted }} title={p.type === "leader" ? "Cycle HS / MS / MS & HS / none" : "Cycle HS / MS / none"}>
+                    <button onClick={() => cycleGroup(p.id)} style={{ ...S.iconBtn, width: p.group === "both" ? 44 : 30, color: p.group === "hs" ? "#8ea3e3" : p.group === "ms" ? "#74c464" : p.group === "both" ? C.cream : C.muted }} title={p.type === "leader" ? "Cycle HS / MS / MS & HS / none" : "Cycle HS / MS / none"}>
                       <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.02em" }}>{p.group === "both" ? "MS+HS" : p.group ? p.group.toUpperCase() : "—"}</span>
                     </button>
                     <button onClick={() => toggleType(p.id)} style={S.iconBtn} title="Toggle role"><RefreshCw size={13} /></button>
@@ -3403,7 +4475,7 @@ function AppMain({ settings, role, onStatus }) {
           {/* Group filter */}
           <div style={{ display:"flex", gap:0, marginBottom:12, borderRadius:10, overflow:"hidden", border:`1px solid ${C.border}` }}>
             {[["all","All"],["ms","MS"],["hs","HS"],["leader","Leaders"],...(people.some(p => p.staff && p.active !== false) ? [["staff","Staff"]] : [])].map(([val, label]) => (
-              <button key={val} onClick={() => setRosterGroup(val)} style={{ flex:1, background: rosterGroup === val ? C.accent : C.surface, border:"none", color: rosterGroup === val ? "#fff" : C.muted, padding:"9px 0", fontSize:13, fontWeight: rosterGroup === val ? 600 : 400, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", transition:"background 0.15s" }}>
+              <button key={val} onClick={() => setRosterGroup(val)} style={{ flex:1, background: rosterGroup === val ? C.accent : C.surface, border:"none", color: rosterGroup === val ? "#101112" : C.muted, padding:"9px 0", fontSize:13, fontWeight: rosterGroup === val ? 600 : 400, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", transition:"background 0.15s" }}>
                 {label}
               </button>
             ))}
@@ -3490,6 +4562,18 @@ function AppMain({ settings, role, onStatus }) {
       )}
 
 
+      {/* ─── SERIES ─── */}
+      {view === "series" && adminAuthed && (
+        <>
+          <div style={{ display:"flex", gap:4, margin:"14px 20px 0", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:4 }}>
+            {[["series", "Series"], ["note", "Leader note"], ["events", "Events"]].map(([v, l]) => (
+              <button key={v} onClick={() => setSeriesPane(v)} style={{ flex:1, padding:"8px 0", borderRadius:9, border:"none", background: seriesPane === v ? C.accent : "none", color: seriesPane === v ? "#101112" : C.muted, fontWeight: seriesPane === v ? 700 : 500, fontSize:13, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{l}</button>
+            ))}
+          </div>
+          {seriesPane === "series" ? <SeriesEditor /> : seriesPane === "note" ? <DevotionalEditor /> : <EventsEditor people={people} smallGroups={smallGroups} />}
+        </>
+      )}
+
       {/* ─── INBOX ─── */}
       {view === "inbox" && adminAuthed && (
         <InboxView items={submissions} people={people} setPeople={setPeople} onRemove={removeSubmissions} studentCodeSet={!!settings.studentCodeSet} parentCodeSet={!!settings.parentCodeSet} />
@@ -3498,6 +4582,7 @@ function AppMain({ settings, role, onStatus }) {
       {/* ─── REPORT ─── */}
       {view === "report" && (
         <div style={S.importWrap}>
+          <MonthlyRecap people={people} weekHistory={weekHistory} ministryName={MINISTRY_NAME} />
           <div style={S.reportBox}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}><BarChart2 size={16} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Weekly Prayer Report</p></div>
@@ -3623,7 +4708,7 @@ function AppMain({ settings, role, onStatus }) {
               <p style={{ margin:0, fontSize:14, color:C.cream, fontWeight:500 }}>Export Roster</p>
               <p style={{ margin:"2px 0 0", fontSize:12, color:C.muted }}>Download all active people as a CSV</p>
             </div>
-            <button onClick={exportRoster} style={{ background:C.accent, border:"none", color:"#fff", borderRadius:9, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+            <button onClick={exportRoster} style={{ background:C.accent, border:"none", color:"#101112", borderRadius:9, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
               <Upload size={14} />Export
             </button>
           </div>
@@ -3699,25 +4784,25 @@ function AppMain({ settings, role, onStatus }) {
 }
 
 /* ── Colors ─────────────────────────────────────────────── */
-// IMPACT Student Ministry brand: blue #3c58a7, green #5aba47, orange #e95e24, charcoal #3a3a3c
+// IMPACT Student Ministry brand: blue #3d59a8, green #4cad3b, orange #e95e24, charcoal #3a3a3c
 const C = {
   bg: "#161719",        // near-black
   surface: "#1f2023",   // raised surface
   card: "#25272a",      // card surface
   border: "#34363a",    // subtle border
-  accent: "#5aba47",    // IMPACT green
-  accentLight: "#7fd06c", // lighter green
+  accent: "#4cad3b",    // IMPACT green
+  accentLight: "#74c464", // lighter green
   accentBg: "#18241a",  // green tinted bg
   orange: "#e95e24",    // IMPACT orange
-  blue: "#3c58a7",      // IMPACT blue
+  blue: "#3d59a8",      // IMPACT blue
   cream: "#f2f1ee",     // soft white
   muted: "#80848a",     // cool grey
   faint: "#2b2d31",     // very dark grey
   student: "#7b93db",   // IMPACT blue, lifted for dark backgrounds
   studentBg: "#1a2036", // dark blue
-  leader: "#5aba47",    // green (same as accent)
+  leader: "#4cad3b",    // green (same as accent)
   leaderBg: "#18241a",
-  prayedGreen: "#5aba47",
+  prayedGreen: "#4cad3b",
   prayedBg: "#18241a",
 };
 
@@ -3725,6 +4810,7 @@ const C = {
 const S = {
   root: { minHeight: "100vh", background: C.bg, color: C.cream, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 14, maxWidth: 480, margin: "0 auto", display: "flex", flexDirection: "column" },
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 20px 0" },
+  appName: { display: "inline-flex", alignItems: "center", gap: 6, borderLeft: `1px solid ${C.border}`, paddingLeft: 10, marginLeft: 2, fontFamily: "'Montserrat', system-ui, sans-serif", fontSize: 15, fontWeight: 700, color: C.cream, letterSpacing: "0.01em", whiteSpace: "nowrap" },
   logoWrap: { display: "flex", alignItems: "center", gap: 8 },
   logoCross: { fontSize: 18, color: C.accent },
   logoText: { fontFamily: "'Montserrat', system-ui, sans-serif", fontSize: 24, fontWeight: 600, color: C.cream, letterSpacing: "0.01em" },
@@ -3753,7 +4839,7 @@ const S = {
   cardOuter: { position: "relative", margin: "0 0 20px", touchAction: "pan-y" },
   cardGhost: { position: "absolute", inset: 0, background: "#242729", borderRadius: 16, boxShadow: "0 4px 16px rgba(0,0,0,0.4)" },
   card: { position: "relative", backgroundColor: C.card, background: `repeating-linear-gradient(${C.card}, ${C.card} 27px, #2b2d31 27px, #2b2d31 28px)`, backgroundPositionY: "52px", border: "1px solid rgba(255,255,255,0.06)", borderTop: `1px solid ${C.accent}33`, borderRadius: 16, padding: "28px 24px 22px", display: "flex", flexDirection: "column", gap: 0, boxShadow: `0 2px 0 ${C.accent}18 inset, 0 12px 48px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)`, userSelect: "none", willChange: "transform" },
-  cardDone: { background: "#17221a", border: "1px solid rgba(90,186,71,0.2)", borderTop: "1px solid rgba(90,186,71,0.35)" },
+  cardDone: { background: "#17221a", border: "1px solid rgba(76,173,59,0.2)", borderTop: "1px solid rgba(76,173,59,0.35)" },
   badge: { display: "inline-flex", alignSelf: "flex-start", padding: "3px 11px", borderRadius: 12, fontSize: 11, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 14 },
   studentBadge: { background: C.studentBg, color: C.student, border: `1px solid ${C.student}33` },
   leaderBadge: { background: C.leaderBg, color: C.leader, border: `1px solid ${C.leader}33` },
@@ -3770,6 +4856,7 @@ const S = {
   sgBadge: { background: "#2a2433", color: "#b49ad0", display: "inline-flex", alignItems: "center", textTransform: "none", letterSpacing: "0.02em" },
   staffBadge: { background: "#2b2414", color: "#e6b34a", border: "1px solid #e6b34a33", marginBottom: 0 },
   staffBadgeSm: { background: "#2b2414", color: "#e6b34a" },
+  answeredBox: { background: C.accentBg, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "12px 14px", marginBottom: 14 },
   familyBox: { background: "#221e29", border: "1px solid #b49ad033", borderRadius: 10, padding: "12px 14px", marginBottom: 14 },
   gospelBox: { background: "#2a1a12", border: `1px solid ${C.orange}40`, borderRadius: 10, padding: "12px 14px", marginTop: 12 },
   causeBox: { background: C.accentBg, border: `1px solid ${C.accent}33`, borderRadius: 10, padding: "12px 14px", marginTop: 12 },
@@ -3782,7 +4869,7 @@ const S = {
   causeShared: { fontSize: 10, color: C.accent, textTransform: "uppercase", letterSpacing: "0.06em" },
   sgRow: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.faint}` },
   avatarBtn: { position: "relative", background: "none", border: "none", padding: 0, cursor: "pointer", flexShrink: 0, marginRight: 10, borderRadius: "50%" },
-  avatarCam: { position: "absolute", right: -2, bottom: -2, width: 17, height: 17, borderRadius: "50%", background: C.accent, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid ${C.surface}` },
+  avatarCam: { position: "absolute", right: -2, bottom: -2, width: 17, height: 17, borderRadius: "50%", background: C.accent, color: "#101112", display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid ${C.surface}` },
   reqBox: { background: C.faint, borderRadius: 10, padding: "12px 14px", marginBottom: 14 },
   reqLabel: { fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 8px" },
   reqItem: { display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 6 },
@@ -3791,7 +4878,7 @@ const S = {
   reqRemove: { background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 },
   reqInputRow: { display: "flex", gap: 6, alignItems: "center", marginTop: 4 },
   reqInput: { flex: 1, minWidth: 0, background: C.faint, border: `1px solid ${C.border}`, borderRadius: 8, color: C.cream, padding: "7px 10px", fontSize: 13, fontFamily: "'Inter', system-ui, sans-serif", outline: "none" },
-  reqAddBtn: { background: C.accent, border: "none", color: "#fff", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
+  reqAddBtn: { background: C.accent, border: "none", color: "#101112", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
   reqCancelBtn: { background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 8, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" },
   addReqTrigger: { background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 8, padding: "6px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", alignSelf: "flex-start", marginTop: 8, fontFamily: "'Inter', system-ui, sans-serif" },
   navRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 20, marginBottom: 16 },
@@ -3818,7 +4905,7 @@ const S = {
   addRow: { display: "flex", gap: 8 },
   addInput: { flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, color: C.cream, padding: "10px 12px", fontSize: 13, fontFamily: "'Inter', system-ui, sans-serif", outline: "none" },
   addTypeSelect: { background: C.surface, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 10, padding: "10px 10px", fontSize: 12, fontFamily: "'Inter', system-ui, sans-serif", cursor: "pointer", outline: "none" },
-  addPersonBtn: { background: C.accent, border: "none", color: "#fff", borderRadius: 10, width: 42, height: 42, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
+  addPersonBtn: { background: C.accent, border: "none", color: "#101112", borderRadius: 10, width: 42, height: 42, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 },
   statRow: { display: "flex", gap: 6 },
   statChip: { flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "8px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
   statNum: { fontSize: 18, fontFamily: "'Montserrat', system-ui, sans-serif", color: C.cream },
@@ -3876,7 +4963,7 @@ const S = {
   previewName: { fontSize: 13, color: C.cream },
   moreText: { fontSize: 12, color: C.muted, margin: "6px 0 0", textAlign: "center" },
   previewBtnRow: { display: "flex", gap: 8, marginTop: 12 },
-  confirmBtn: { background: C.accent, border: "none", color: "#fff", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
+  confirmBtn: { background: C.accent, border: "none", color: "#101112", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
   cancelBtn: { background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 8, padding: "9px 16px", fontSize: 13, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
   // WEEKLY REPORT
   reportBox: { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px" },
@@ -3900,8 +4987,9 @@ const S = {
   myGroupRow: { display: "flex", alignItems: "center", gap: 8, width: "100%", marginBottom: 10 },
   myGroupPill: { display: "flex", flex: 1, minWidth: 0, background: C.faint, border: `1px solid ${C.border}`, borderRadius: 22, padding: 3, gap: 3 },
   myGroupOpt: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: C.muted, borderRadius: 18, padding: "7px 10px", fontSize: 13, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
-  myGroupOptOn: { background: C.accent, color: "#fff", fontWeight: 600 },
+  myGroupOptOn: { background: C.accent, color: "#101112", fontWeight: 600 },
   myGroupChange: { background: "none", border: "none", color: C.muted, fontSize: 12, cursor: "pointer", padding: "4px 2px", fontFamily: "'Inter', system-ui, sans-serif", flexShrink: 0 },
+  wallBanner: { display: "flex", alignItems: "center", gap: 10, width: "100%", boxSizing: "border-box", background: "#2a1a12", border: `1px solid ${C.orange}55`, borderRadius: 12, padding: "11px 14px", marginBottom: 12, color: C.cream, fontSize: 13.5, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif" },
   tabBadge: { position: "absolute", top: 2, right: -2, minWidth: 16, height: 16, padding: "0 4px", boxSizing: "border-box", borderRadius: 8, background: C.orange, color: "#fff", fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 },
   adminLink: { background: "none", border: "none", color: C.border, fontSize: 11, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "0.06em" },
   // MODAL
@@ -3926,7 +5014,7 @@ const S = {
   // GROUP BADGES
   badgeRow: { display: "flex", gap: 6, marginBottom: 14 },
   hsBadge: { background: C.studentBg, color: "#8ea3e3", border: "1px solid #8ea3e333", marginBottom: 0 },
-  msBadge: { background: C.faint, color: "#7fd06c", border: "1px solid #5aba4733", marginBottom: 0 },
+  msBadge: { background: C.faint, color: "#74c464", border: "1px solid #4cad3b33", marginBottom: 0 },
   hsBadgeSm: { background: C.studentBg, color: "#8ea3e3" },
-  msBadgeSm: { background: C.faint, color: "#7fd06c" },
+  msBadgeSm: { background: C.faint, color: "#74c464" },
 };

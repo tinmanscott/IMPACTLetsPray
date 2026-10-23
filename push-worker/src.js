@@ -26,7 +26,15 @@ async function buildMessage(kv) {
     : remaining === 0
       ? "Everyone has been prayed for this week. Keep it going 🙏"
       : `${remaining} ${remaining === 1 ? "person still needs" : "people still need"} prayer this week. Take a few minutes today 🙏`;
-  return { title: settings.name || "Let’s Pray", body, url: "/" };
+  // Add this week's series verse, if one is set
+  let verse = "";
+  try {
+    const series = JSON.parse((await kv.get("series")) || "null");
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const week = series && (series.weeks || []).filter(w => w.date <= today).pop();
+    if (week && week.verseRef) verse = ` This week: ${week.verseRef}.`;
+  } catch (_e) {}
+  return { title: settings.name || "Let’s Pray", body: body + verse, url: "/" };
 }
 
 export async function sendDueReminders(env, now = new Date()) {

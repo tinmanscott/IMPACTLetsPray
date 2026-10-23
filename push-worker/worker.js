@@ -135,7 +135,15 @@ async function buildMessage(kv) {
   } catch (_e) {
   }
   const body = remaining === null ? "Take a few minutes to pray for your students today \u{1F64F}" : remaining === 0 ? "Everyone has been prayed for this week. Keep it going \u{1F64F}" : `${remaining} ${remaining === 1 ? "person still needs" : "people still need"} prayer this week. Take a few minutes today \u{1F64F}`;
-  return { title: settings.name || "Let\u2019s Pray", body, url: "/" };
+  let verse = "";
+  try {
+    const series = JSON.parse(await kv.get("series") || "null");
+    const today = (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const week = series && (series.weeks || []).filter((w) => w.date <= today).pop();
+    if (week && week.verseRef) verse = ` This week: ${week.verseRef}.`;
+  } catch (_e) {
+  }
+  return { title: settings.name || "Let\u2019s Pray", body: body + verse, url: "/" };
 }
 async function sendDueReminders(env, now = /* @__PURE__ */ new Date()) {
   const kv = env.INTERCEDE_KV;

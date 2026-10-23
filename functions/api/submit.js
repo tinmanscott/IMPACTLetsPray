@@ -22,7 +22,7 @@ export async function onRequest(context) {
   try { body = await request.json(); } catch (_e) { return json({ error: "Invalid JSON" }, 400); }
 
   const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 80);
-  const KINDS = ["request", "cause", "info", "gospel", "parent"];
+  const KINDS = ["request", "cause", "info", "gospel", "parent", "praise"];
   const kind = KINDS.includes(body.kind) ? body.kind : "request";
   // Parents can only send family requests; students can't send parent ones
   if (role === "parent" && kind !== "parent") return json({ error: "Please use the parent page." }, 403);
@@ -74,6 +74,10 @@ export async function onRequest(context) {
       outcome: OUTCOMES.includes(body.outcome) ? body.outcome : null,
     };
     text = String(body.text || "").trim().slice(0, 1200);
+  } else if (kind === "praise") {
+    // A praise report: how God answered a prayer
+    text = String(body.text || "").trim().slice(0, 1200);
+    if (text.length < 3) return json({ error: "Tell us what God did!" }, 400);
   } else if (kind === "info") {
     if (!grade && !birthday && !photo) return json({ error: "Add your grade, birthday, or a photo." }, 400);
   } else if (kind === "request") {
@@ -91,7 +95,10 @@ export async function onRequest(context) {
   const share = kind === "request" && body.share === true;
   const anonymous = share && body.anonymous === true;
 
-  const result = await addSubmission(env.INTERCEDE_KV, { name, kind, text, friends, grade, birthday, share, anonymous, hasPhoto: !!photo, gospel, parent });
+  // The student's device, if they asked to hear when someone prays for them
+  const notifyId = typeof body.notifyId === "string" && /^[\w-]{10,40}$/.test(body.notifyId) ? body.notifyId : null;
+
+  const result = await addSubmission(env.INTERCEDE_KV, { name, kind, text, friends, grade, birthday, share, anonymous, hasPhoto: !!photo, gospel, parent, notifyId, praise: kind === "praise" ? { share: body.share === true, anonymous: body.share === true && body.anonymous === true } : null });
   if (!result.ok) return json({ error: result.error }, 429);
   if (photo) await savePendingPhoto(env.INTERCEDE_KV, result.id, photo);
   return json({ ok: true, id: result.id });

@@ -4,8 +4,10 @@
 // POST /api/wall?action=pray   { id }      → +1 "I prayed"                    (students, leaders, admins)
 // POST /api/wall?action=post   { name, text } → add an approved post          (admin)
 // POST /api/wall?action=remove { id }      → take a post down                 (admin)
+// POST /api/wall?action=answer { id, update } → mark a request answered       (admin)
 // Access is checked in _middleware.js.
-import { readWallWithCounts, addWallPost, removeWallPost, prayForPost } from "../../lib/wall.js";
+import { readWallWithCounts, addWallPost, removeWallPost, prayForPost, findWallPost, answerWallPost } from "../../lib/wall.js";
+import { notifyOnce } from "../../lib/notify.js";
 import { json } from "../../lib/auth.js";
 
 // Group totals only: students see how the whole group is doing, never who did what.
@@ -41,11 +43,26 @@ export async function onRequest(context) {
   try { body = await request.json(); } catch (_e) { return json({ error: "Invalid JSON" }, 400); }
 
   if (action === "pray") {
-    const n = await prayForPost(kv, String(body.id || ""));
-    return n === null ? json({ error: "That request is no longer on the wall" }, 404) : json({ ok: true, prayed: n });
+    const id = String(body.id || "");
+    const n = await prayForPost(kv, id);
+    if (n === null) return json({ error: "That request is no longer on the wall" }, 404);
+    // Let the student who posted it know (once a day)
+    const post = await findWallPost(kv, id);
+    if (post && post.notifyId && !post.praise) {
+      context.waitUntil(notifyOnce(kv, post.notifyId, `wall:${id}`, {
+        title: "Someone prayed for you 🙏",
+        body: "Someone just prayed for your request on the Prayer Wall.",
+        url: "/submit",
+      }));
+    }
+    return json({ ok: true, prayed: n });
+  }
+  if (action === "answer") {
+    const ok = await answerWallPost(kv, String(body.id || ""), body.update);
+    return ok ? json({ ok: true }) : json({ error: "Not found" }, 404);
   }
   if (action === "post") {
-    const post = await addWallPost(kv, { name: body.name, text: body.text });
+    const post = await addWallPost(kv, { name: body.name, text: body.text, praise: body.praise === true, notifyId: body.notifyId });
     return post ? json({ ok: true, post }) : json({ error: "Missing text" }, 400);
   }
   if (action === "remove") {

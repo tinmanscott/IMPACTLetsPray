@@ -27,6 +27,103 @@ export async function onRequest(context) {
     return new Response(JSON.stringify({ error: "Use /api/auth to change settings" }), { status: 403, headers });
   }
 
+  // Teaching series: { name, weeks: [{ id, date: "YYYY-MM-DD", title, verseRef, verseText, prayerPrompt, parentPrompt }] }
+  if (key === "series") {
+    if (request.method === "GET") {
+      const data = await env.INTERCEDE_KV.get("series");
+      return new Response(data || "null", { headers });
+    }
+    if (request.method === "POST") {
+      try {
+        const sr = JSON.parse(await request.text());
+        const clip = (v, n) => String(v || "").trim().slice(0, n);
+        const clean = sr === null ? null : {
+          name: clip(sr.name, 80),
+          art: Number(sr.art) || 0,                      // version stamp of the uploaded series artwork (0 = none)
+          book: clip(sr.book, 80),
+          weeks: (Array.isArray(sr.weeks) ? sr.weeks : []).slice(0, 60)
+            .filter(w => w && /^\d{4}-\d{2}-\d{2}$/.test(String(w.date || "")))
+            .map(w => ({
+              id: clip(w.id, 40) || Math.random().toString(36).slice(2),
+              date: w.date,
+              title: clip(w.title, 120),
+              verseRef: clip(w.verseRef, 80),
+              verseText: clip(w.verseText, 1200),
+              prayerPrompt: clip(w.prayerPrompt, 600),
+              parentPrompt: clip(w.parentPrompt, 2000),   // ASK: questions, one per line
+              parentThink: clip(w.parentThink, 3000),     // THINK: the big idea for parents
+              parentPray: clip(w.parentPray, 2000),       // PRAY: one line per thing to pray for their student
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date)),
+        };
+        await env.INTERCEDE_KV.put("series", JSON.stringify(clean));
+        return new Response(JSON.stringify({ ok: true, series: clean }), { headers });
+      } catch (_e) {
+        return new Response(JSON.stringify({ error: "Invalid JSON" }), { status: 400, headers });
+      }
+    }
+  }
+
+  // Event prayer focus: [{ id, name, start, end, focus, prayerPoints, attendees: [personId] }]
+  // Students and parents see the name, dates, focus and how many are going; leaders see who.
+  if (key === "events") {
+    const role = ctxData && ctxData.session ? ctxData.session.role : null;
+    if (request.method === "GET") {
+      let list = [];
+      try { list = JSON.parse((await env.INTERCEDE_KV.get("events")) || "[]"); } catch (_e) {}
+      if (role !== "team" && role !== "admin") list = list.map(({ attendees, ...e }) => ({ ...e, going: (attendees || []).length }));
+      return new Response(JSON.stringify(list), { headers });
+    }
+    if (request.method === "POST") {
+      try {
+        const raw = JSON.parse(await request.text());
+        if (!Array.isArray(raw)) throw new Error("not array");
+        const clip = (v, n) => String(v || "").trim().slice(0, n);
+        const day = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? v : null;
+        const clean = raw.slice(0, 20).map(e => ({
+          id: clip(e.id, 40) || Math.random().toString(36).slice(2),
+          name: clip(e.name, 80),
+          start: day(e.start),
+          end: day(e.end) || day(e.start),
+          focus: clip(e.focus, 1500),
+          prayerPoints: clip(e.prayerPoints, 2000),
+          attendees: (Array.isArray(e.attendees) ? e.attendees : []).map(x => clip(x, 40)).filter(Boolean).slice(0, 500),
+        })).filter(e => e.name && e.start);
+        await env.INTERCEDE_KV.put("events", JSON.stringify(clean));
+        return new Response(JSON.stringify({ ok: true, events: clean }), { headers });
+      } catch (_e) {
+        return new Response(JSON.stringify({ error: "Invalid events" }), { status: 400, headers });
+      }
+    }
+  }
+
+  // Leader devotional: { id, title, body, verseRef, author, at }
+  if (key === "devotional") {
+    if (request.method === "GET") {
+      const data = await env.INTERCEDE_KV.get("devotional");
+      return new Response(data || "null", { headers });
+    }
+    if (request.method === "POST") {
+      try {
+        const d = JSON.parse(await request.text());
+        const clip = (v, n) => String(v || "").trim().slice(0, n);
+        const clean = d === null ? null : {
+          id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+          title: clip(d.title, 120),
+          body: clip(d.body, 5000),
+          verseRef: clip(d.verseRef, 80),
+          author: clip(d.author, 60),
+          at: Date.now(),
+        };
+        if (clean && !clean.title && !clean.body) throw new Error("empty");
+        await env.INTERCEDE_KV.put("devotional", JSON.stringify(clean));
+        return new Response(JSON.stringify({ ok: true, devotional: clean }), { headers });
+      } catch (_e) {
+        return new Response(JSON.stringify({ error: "Add a title or a note." }), { status: 400, headers });
+      }
+    }
+  }
+
   // Team goals: { weeklyPct, gospelGoal, convGoal }
   if (key === "goals") {
     if (request.method === "GET") {
