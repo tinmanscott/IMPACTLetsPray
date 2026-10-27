@@ -9,6 +9,10 @@
 import { json } from "../../lib/auth.js";
 import { loadCalendars, cleanFeedUrl, feedEvents, parseICS, fetchFeed } from "../../lib/calendar.js";
 
+// Brand colors for each BAND calendar (IMPACT blue, dGroups green, Events orange)
+const COLORS = ["blue", "green", "orange", "gold"];
+const guessColor = name => /d-?group/i.test(name) ? "green" : /event/i.test(name) ? "orange" : "blue";
+
 export async function onRequest(context) {
   const { request, env, data: ctx } = context;
   const kv = env.INTERCEDE_KV;
@@ -23,13 +27,14 @@ export async function onRequest(context) {
     }
     const cals = (await loadCalendars(kv)).filter(c => isLeader || c.audience !== "leaders");
     const results = await Promise.all(cals.map(c => feedEvents(kv, c).then(r => ({ c, r }))));
-    const events = results.flatMap(({ c, r }) => (r.events || []).map(e => ({ ...e, cal: c.id, calName: c.name, leadersOnly: c.audience === "leaders" })))
+    const events = results.flatMap(({ c, r }) => (r.events || []).map(e => ({ ...e, cal: c.id, calName: c.name, color: c.color || guessColor(c.name), leadersOnly: c.audience === "leaders" })))
       .filter(e => e.ts + (e.allDay ? 864e5 : 3 * 36e5) >= Date.now() - 864e5)
       .sort((a, b) => a.ts - b.ts)
-      .slice(0, 200);
+      .slice(0, 400);
     const updated = results.length ? Math.min(...results.map(x => x.r.at || Date.now())) : null;
     const errors = role === "admin" ? results.filter(x => x.r.error).map(x => ({ cal: x.c.name, error: x.r.error })) : undefined;
-    return json({ events, updated, configured: cals.length > 0, errors });
+    const calendars = cals.map(c => ({ id: c.id, name: c.name, color: c.color || guessColor(c.name), leadersOnly: c.audience === "leaders" }));
+    return json({ events, calendars, updated, configured: cals.length > 0, errors });
   }
 
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -52,6 +57,7 @@ export async function onRequest(context) {
       name: String(f.name || "").trim().slice(0, 60) || "Calendar",
       url: cleanFeedUrl(f.url),
       audience: f.audience === "leaders" ? "leaders" : "everyone",
+      color: COLORS.includes(f.color) ? f.color : guessColor(String(f.name || "")),
     })).filter(f => f.url);
     await kv.put("calendars", JSON.stringify(feeds));
     return json({ ok: true, feeds });

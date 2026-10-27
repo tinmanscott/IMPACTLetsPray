@@ -326,6 +326,17 @@ async function apiSaveHistory(history) {
   });
 }
 
+// First name + last initial ("Ethan Brooks" → "Ethan B."). Full names show only on admin screens.
+const NAME_SUFFIX = /^(jr|sr|ii|iii|iv|v)\.?$/i;
+function dn(full) {
+  const parts = String(full || "").trim().split(/\s+/).filter(Boolean);
+  while (parts.length > 2 && /^(coach|pastor|pr|mr|mrs|ms|miss|dr|rev)\.?$/i.test(parts[0])) parts.shift(); // "Coach Drew Hall" → "Drew H."
+  while (parts.length > 2 && NAME_SUFFIX.test(parts[parts.length - 1])) parts.pop();
+  if (parts.length < 2) return parts[0] || "";
+  const last = parts[parts.length - 1].replace(/[^A-Za-z\u00C0-\u024F]/g, "");
+  return last ? `${parts[0]} ${last[0].toUpperCase()}.` : parts[0];
+}
+
 function getWeekLabel(weekStartTs) {
   // Show the Monday date of that week clearly
   const d = new Date(weekStartTs);
@@ -426,19 +437,20 @@ function birthdayInYear(month, day, year) {
   return new Date(year, month - 1, resolvedDay);
 }
 
+// Leaders only see a birthday during that person's birthday month, as a reminder to pray for them
 function getBirthdayStatus(birthday) {
   if (!birthday) return null;
   const today = new Date();
   const [month, day] = birthday.split("-").map(Number);
-  if (!month || !day) return null;
+  if (!month || !day || month !== today.getMonth() + 1) return null;
   const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  let bday = birthdayInYear(month, day, today.getFullYear());
-  if (bday < todayMidnight) bday = birthdayInYear(month, day, today.getFullYear() + 1);
+  const bday = birthdayInYear(month, day, today.getFullYear());
   const diff = Math.round((bday - todayMidnight) / 86400000);
-  if (diff === 0) return { label: "🎂 Birthday today!", urgent: true, today: true };
-  if (diff === 1) return { label: "🎂 Birthday tomorrow!", urgent: true, today: false };
-  if (diff <= 7) return { label: `🎂 Birthday in ${diff} days`, urgent: false };
-  return null;
+  const when = formatBirthday(birthday);
+  if (diff === 0) return { label: "🎂 Birthday today!", urgent: true, today: true, diff };
+  if (diff === 1) return { label: "🎂 Birthday tomorrow!", urgent: true, today: false, diff };
+  if (diff > 1) return { label: `🎂 Birthday ${when}`, urgent: false, diff };
+  return { label: `🎂 Birthday was ${when}`, urgent: false, past: true, diff };
 }
 
 function formatBirthday(birthday) {
@@ -456,10 +468,10 @@ function getUpcomingBirthdays(people) {
     if (!p.birthday) continue;
     const [month, day] = p.birthday.split("-").map(Number);
     if (!month || !day) continue;
-    let bday = birthdayInYear(month, day, today.getFullYear());
-    if (bday < todayMidnight) bday = birthdayInYear(month, day, today.getFullYear() + 1);
+    if (month !== today.getMonth() + 1) continue; // birthday month only
+    const bday = birthdayInYear(month, day, today.getFullYear());
     const diff = Math.round((bday - todayMidnight) / 86400000);
-    if (diff <= 7) results.push({ person: p, diff, date: bday });
+    if (diff >= 0) results.push({ person: p, diff, date: bday });
   }
   return results.sort((a, b) => a.diff - b.diff);
 }
@@ -722,18 +734,16 @@ function SetupScreen({ onComplete }) {
   const [sub, setSub] = React.useState("");
   const [pw, setPw] = React.useState("");
   const [pw2, setPw2] = React.useState("");
-  const [team, setTeam] = React.useState("");
   const [err, setErr] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
   async function submit() {
     if (!name.trim()) return setErr("Please enter your ministry name.");
-    if (pw.length < 6) return setErr("Admin password must be at least 6 characters.");
+    if (pw.length < 8) return setErr("Admin password must be at least 8 characters.");
     if (pw !== pw2) return setErr("Passwords don’t match.");
-    if (team.trim().length < 4) return setErr("Team code must be at least 4 characters.");
     setSaving(true); setErr("");
     try {
-      onComplete(await apiAuth("setup", { name: name.trim(), sub: sub.trim(), password: pw, teamCode: team.trim() }));
+      onComplete(await apiAuth("setup", { name: name.trim(), sub: sub.trim(), password: pw }));
     } catch (e) { setErr(e.message); setSaving(false); }
   }
 
@@ -744,9 +754,9 @@ function SetupScreen({ onComplete }) {
       <div style={{ width:"100%", maxWidth:360, display:"flex", flexDirection:"column", gap:12 }}>
         <div><label style={authLbl}>Ministry Name</label><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. IMPACT Students" style={authInp} /></div>
         <div><label style={authLbl}>Subtitle <span style={{ opacity:0.5, fontWeight:400, textTransform:"none" }}>(optional)</span></label><input value={sub} onChange={e => setSub(e.target.value)} placeholder='e.g. "Let’s Pray"' style={authInp} /></div>
-        <div><label style={authLbl}>Admin Password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Only you need this (6+ characters)" style={authInp} /></div>
-        <div><label style={authLbl}>Confirm Password</label><input type="password" value={pw2} onChange={e => setPw2(e.target.value)} placeholder="Re-enter password" style={authInp} /></div>
-        <div><label style={authLbl}>Team Code</label><input value={team} onChange={e => setTeam(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} placeholder="What leaders enter to get in" style={authInp} autoCapitalize="none" autoCorrect="off" /></div>
+        <div><label style={authLbl}>Admin Password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Only you need this (8+ characters)" style={authInp} /></div>
+        <div><label style={authLbl}>Confirm Password</label><input type="password" value={pw2} onChange={e => setPw2(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()} placeholder="Re-enter password" style={authInp} /></div>
+        <p style={{ fontSize:12.5, color:"#80848a", margin:0, lineHeight:1.5 }}>Next, you’ll give each leader their own code in the Access tab.</p>
         {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0 }}>{err}</p>}
         <button onClick={submit} disabled={saving} style={{ ...authBtn, opacity: saving ? 0.7 : 1 }}>{saving ? "Saving…" : "Get Started"}</button>
       </div>
@@ -770,7 +780,7 @@ function LockScreen({ status, onSignedIn, mode = "leader" }) {
   const [code, setCode] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  const isAdmin = mode === "admin" || !status.teamCodeSet;
+  const isAdmin = mode === "admin";
 
   async function submit() {
     if (!code.trim()) return;
@@ -790,16 +800,16 @@ function LockScreen({ status, onSignedIn, mode = "leader" }) {
       <AppWordmark />
       <p style={{ fontSize:12, color:"#80848a", margin:"6px 0 0", textTransform:"uppercase", letterSpacing:"0.14em", fontWeight:700 }}>{mode === "admin" ? "Admin" : "Leaders"}</p>
       <p style={{ fontSize:14, color:"#80848a", margin:"12px 0 24px", textAlign:"center", maxWidth:300, lineHeight:1.5 }}>
-        {mode === "admin" ? "Sign in with the admin password to manage the roster, Inbox, lessons and settings." : status.teamCodeSet ? "Enter your team code to start praying." : "Your admin needs to finish setup. Admins: sign in with your admin password."}
+        {mode === "admin" ? "Sign in with the admin password to manage the roster, Inbox, lessons and settings." : status.teamCodeSet ? "Enter your leader code to start praying. Each leader has their own." : "Leader codes haven’t been handed out yet. Ask your student pastor for yours."}
       </p>
       <div style={{ width:"100%", maxWidth:320, display:"flex", flexDirection:"column", gap:12 }}>
         <input autoFocus type="password" value={code} onChange={e => setCode(e.target.value)} onKeyDown={e => e.key === "Enter" && submit()}
-          aria-label={isAdmin ? "Admin password" : "Team code"} placeholder={isAdmin ? "Admin password" : "Team code"} style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
+          aria-label={isAdmin ? "Admin password" : "Leader code"} placeholder={isAdmin ? "Admin password" : "Your leader code"} style={{ ...authInp, textAlign:"center", fontSize:17 }} autoCapitalize="none" autoCorrect="off" />
         {err && <p style={{ color:"#e07a5f", fontSize:13, margin:0, textAlign:"center" }}>{err}</p>}
         <button onClick={submit} disabled={busy} style={{ ...authBtn, opacity: busy ? 0.7 : 1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Lock size={15} /> {busy ? "Checking…" : "Sign In"}</button>
       </div>
       <p style={{ fontSize:12.5, color:"#80848a", marginTop:28, textAlign:"center", maxWidth:320, lineHeight:1.7 }}>
-        {mode === "admin" ? <>Leader? <button onClick={() => navTo("/leaders")} style={linkBtn}>Sign in with the team code</button></> : <>Students: <button onClick={() => navTo("/students")} style={linkBtn}>go to the student page</button><br />Parents: <button onClick={() => navTo("/parents")} style={linkBtn}>go to the parent page</button></>}
+        {mode === "admin" ? <>Leader? <button onClick={() => navTo("/leaders")} style={linkBtn}>Sign in with your leader code</button></> : <>Students: <button onClick={() => navTo("/students")} style={linkBtn}>go to the student page</button><br />Parents: <button onClick={() => navTo("/parents")} style={linkBtn}>go to the parent page</button></>}
       </p>
     </div>
   );
@@ -983,7 +993,6 @@ function ReminderCard() {
 function SettingsCard({ settings, onStatus }) {
   const [name, setName] = React.useState(settings.name || "");
   const [sub, setSub] = React.useState(settings.sub || "");
-  const [team, setTeam] = React.useState("");
   const [student, setStudent] = React.useState("");
   const [parentCode, setParentCode] = React.useState("");
   const [curPw, setCurPw] = React.useState("");
@@ -1003,18 +1012,12 @@ function SettingsCard({ settings, onStatus }) {
   const inp = { ...S.addInput, margin:0, fontSize:13 };
 
   return (
-    <div style={{ background:C.surface, border:`1px solid ${settings.teamCodeSet ? C.border : C.orange}`, borderRadius:14, padding:"14px", display:"flex", flexDirection:"column", gap:14, marginTop:16 }}>
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"14px", display:"flex", flexDirection:"column", gap:14, marginTop:16 }}>
       <p style={{ margin:0, fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:"0.06em", fontWeight:600, display:"flex", alignItems:"center", gap:6 }}><SettingsIcon size={12} /> App Settings</p>
 
       <div>
-        {label(settings.teamCodeSet ? "Change team code" : "Set a team code (required)")}
-        {!settings.teamCodeSet && <p style={{ margin:"0 0 8px", fontSize:12, color:C.orange, lineHeight:1.5 }}>Leaders can’t get into the app until you set a team code.</p>}
-        <div style={row}>
-          <input value={team} onChange={e => setTeam(e.target.value)} placeholder="New team code (4+ characters)" style={inp} autoCapitalize="none" autoCorrect="off" />
-          <button disabled={busy === "team" || team.trim().length < 4} onClick={() => save("team", { teamCode: team.trim() }, () => setTeam(""))} style={{ ...S.reqAddBtn, opacity: team.trim().length < 4 ? 0.5 : 1 }}>Save</button>
-        </div>
-        {settings.teamCodeSet && <p style={{ margin:"6px 0 0", fontSize:11.5, color:C.muted }}>Changing it signs out every leader until they enter the new code.</p>}
-        {note("team")}
+        {label("Leader codes")}
+        <p style={{ margin:0, fontSize:12, color:C.muted, lineHeight:1.5 }}>Each leader has their own code now. Add leaders, make codes and revoke them in the <b style={{ color:C.cream }}>Access</b> tab.</p>
       </div>
 
       <div>
@@ -1569,23 +1572,22 @@ function DevoCard({ week, devo, open, onToggle, isToday, mode, count, onMarked }
         <span aria-hidden="true" style={{ width:26, height:26, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, background: done ? "#4cad3b" : isToday ? "#3d59a8" : "#2a2c30", color: done ? "#101112" : "#f2f1ee" }}>{done ? "✓" : devo.day}</span>
         <span style={{ flex:1, minWidth:0 }}>
           <span style={{ display:"block", fontSize:11, letterSpacing:"0.1em", textTransform:"uppercase", fontWeight:700, color: isToday ? "#8ea3e3" : "#80848a" }}>{isToday ? "Today · " : ""}{DAY_NAMES[new Date(date + "T12:00:00").getDay()]}</span>
-          <span style={{ display:"block", fontSize:14.5, color: future && !isToday ? "#a9acb1" : "#f2f1ee", fontWeight:600, lineHeight:1.3 }}>{devo.title || devo.ref || `Day ${devo.day}`}</span>
-          {devo.title && devo.ref && <span style={{ display:"block", fontSize:12, color:"#74c464", fontWeight:600, marginTop:1 }}>{devo.ref}</span>}
+          <span style={{ display:"block", fontSize:14.5, color: future && !isToday ? "#a9acb1" : "#f2f1ee", fontWeight:600, lineHeight:1.3 }}>{devo.ref || `Day ${devo.day}`}</span>
           {count && <span style={{ display:"block", fontSize:12, color:"#a9acb1", marginTop:2 }}>✓ {count.s || 0} student{count.s === 1 ? "" : "s"}{count.p ? ` · ${count.p} parent${count.p === 1 ? "" : "s"}` : ""}{count.l ? ` · ${count.l} leader${count.l === 1 ? "" : "s"}` : ""}</span>}
         </span>
         <ChevronRight size={16} color="#80848a" style={{ transform: open ? "rotate(90deg)" : "none", transition:"transform 0.15s", flexShrink:0 }} />
       </button>
       {open && (
         <div style={{ padding:"2px 16px 14px", display:"flex", flexDirection:"column", gap:12 }}>
-          {devo.ref && (
+          {(devo.ref || devo.passage) && (
             <div>
-              <div style={head}>Read</div>
+              <div style={head}>Scripture</div>
               {devo.passage && <div style={{ borderLeft:"3px solid #4cad3b", paddingLeft:10, fontSize:14, color:"#f2f1ee", lineHeight:1.55, fontStyle:"italic", whiteSpace:"pre-wrap", marginBottom:6 }}>{devo.passage}</div>}
-              <a href={bibleLink(devo.ref)} target="_blank" rel="noopener noreferrer" style={{ fontSize:13.5, color:"#74c464", fontWeight:700, textDecoration:"none" }}>{devo.passage ? `${devo.ref} · read the whole passage →` : `Read ${devo.ref} →`}</a>
+              {devo.ref && <a href={bibleLink(devo.ref)} target="_blank" rel="noopener noreferrer" style={{ fontSize:13.5, color:"#74c464", fontWeight:700, textDecoration:"none" }}>{devo.passage ? `${devo.ref} · open in the Bible →` : `Read ${devo.ref} →`}</a>}
             </div>
           )}
           {devo.reflect && <div><div style={head}>Think</div><p style={{ margin:0, fontSize:14, color:"#d9d7d2", lineHeight:1.6, whiteSpace:"pre-wrap" }}>{devo.reflect}</p></div>}
-          {devo.respond && <div><div style={head}>{mode === "parent" ? "Talk about it" : "Respond"}</div><p style={{ margin:0, fontSize:14, color:"#f2f1ee", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{devo.respond}</p></div>}
+          {devo.respond && <div><div style={head}>Respond</div><p style={{ margin:0, fontSize:14, color:"#f2f1ee", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{devo.respond}</p></div>}
           {devo.pray && <div><div style={head}>Pray</div><p style={{ margin:0, fontSize:14, color:"#f2f1ee", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{devo.pray}</p></div>}
           <button onClick={mark} aria-pressed={done} style={{ alignSelf:"flex-start", background: done ? "none" : "#4cad3b", color: done ? "#80848a" : "#101112", border: done ? "1px solid #34363a" : "none", borderRadius:9, padding:"9px 14px", fontSize:13.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{done ? "Done ✓ (undo)" : "I did today’s devo ✓"}</button>
         </div>
@@ -1657,13 +1659,13 @@ function DevosView({ series, mode = "student" }) {
   );
 }
 
-/* Reads devos pasted as text: "Day 1 – Title" (or "Monday: Title") headings, then Read: / Think: / Respond: / Pray: lines */
+/* Reads devos pasted as text: "Day 1" (or "Monday") headings, then Scripture: / Think: / Respond: / Pray: lines */
 function parseDevos(raw) {
   const lines = String(raw || "").replace(/\r/g, "").split("\n").map(l => l.trim());
   const out = [];
   let cur = null, field = "reflect";
   const DAY = /^(?:day\s*(\d)|(mon|tue|wed|thu|fri|sat)[a-z]*)\b\s*[:.\-–—]?\s*(.*)$/i;
-  const FIELDS = [[/^(read|scripture|passage)\s*:?\s*(.*)$/i, "ref"], [/^(think|reflect|reflection|devotion)\s*:?\s*(.*)$/i, "reflect"], [/^(respond|response|ask|question|apply|do this)\s*:?\s*(.*)$/i, "respond"], [/^(pray|prayer)\s*:?\s*(.*)$/i, "pray"]];
+  const FIELDS = [[/^(scripture passage|scripture|read|passage)\s*:?\s*(.*)$/i, "ref"], [/^(think|reflect|reflection|devotion)\s*:?\s*(.*)$/i, "reflect"], [/^(respond|response|ask|question|apply|do this)\s*:?\s*(.*)$/i, "respond"], [/^(pray|prayer)\s*:?\s*(.*)$/i, "pray"]];
   for (const l of lines) {
     const d = DAY.exec(l);
     if (d && l.length < 120) {
@@ -1699,7 +1701,7 @@ function DevosEditor({ week, setWeek }) {
   const set = next => setWeek(week.id, "devos", next.slice().sort((a, b) => a.day - b.day));
   const setD = (id, k, v) => set(devos.map(d => d.id === id ? { ...d, [k]: v } : d));
   function add() {
-    const used = new Set(devos.map(d => d.day));
+    const used = new Set(devos.map(d => d.day)); // each day: Scripture passage, Think, Respond, Pray
     const day = [1, 2, 3, 4, 5, 6].find(x => !used.has(x)) || 6;
     set([...devos, { id: genId(), day, title: "", ref: "", passage: "", reflect: "", respond: "", pray: "" }]);
   }
@@ -1720,7 +1722,7 @@ function DevosEditor({ week, setWeek }) {
       </button>
       {open && (
         <>
-          <textarea value={paste} onChange={e => { setPaste(e.target.value); setPmsg(""); }} rows={3} placeholder={"Paste devos to fill them in, e.g.\nDay 1 – Not Ashamed\nRead: Romans 1:16-17\nThink: …\nRespond: …\nPray: …\nDay 2 – …"} style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+          <textarea value={paste} onChange={e => { setPaste(e.target.value); setPmsg(""); }} rows={3} placeholder={"Paste devos to fill them in, e.g.\nDay 1\nScripture: Romans 1:16-17\n(passage text, optional)\nThink: …\nRespond: …\nPray: …\nDay 2\n…"} style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             {pmsg && <span style={{ fontSize:12, color: /Couldn/.test(pmsg) ? "#e07a5f" : C.accentLight, lineHeight:1.4 }}>{pmsg}</span>}
             <button onClick={fill} disabled={!paste.trim()} style={{ ...S.reqAddBtn, marginLeft:"auto", opacity: paste.trim() ? 1 : 0.5 }}>Fill in devos</button>
@@ -1733,9 +1735,10 @@ function DevosEditor({ week, setWeek }) {
                 </select>
                 <button onClick={() => set(devos.filter(x => x.id !== d.id))} style={{ marginLeft:"auto", background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Remove</button>
               </div>
-              <input value={d.title} onChange={e => setD(d.id, "title", e.target.value)} placeholder="Title (e.g. Good news worth sharing)" aria-label="Devo title" style={field} />
-              <input value={d.ref} onChange={e => setD(d.id, "ref", e.target.value)} placeholder="Read: Bible reference (e.g. Romans 1:18–23)" aria-label="Bible reference" style={field} />
-              <textarea value={d.passage} onChange={e => setD(d.id, "passage", e.target.value)} rows={2} placeholder="Passage text (optional; otherwise people tap to open it in the Bible)" aria-label="Passage text" style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+              <div><label style={lbl}>Scripture passage</label>
+                <input value={d.ref} onChange={e => setD(d.id, "ref", e.target.value)} placeholder="Reference, e.g. Romans 1:18–23" aria-label="Scripture reference" style={{ ...field, marginBottom:6 }} />
+                <textarea value={d.passage} onChange={e => setD(d.id, "passage", e.target.value)} rows={3} placeholder="The passage text (from the translation you teach). Leave blank to have people tap through to the Bible." aria-label="Scripture passage text" style={{ ...field, resize:"vertical", lineHeight:1.45 }} />
+              </div>
               <div><label style={lbl}>Think</label><textarea value={d.reflect} onChange={e => setD(d.id, "reflect", e.target.value)} rows={3} placeholder="A short thought on the passage" style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
               <div><label style={lbl}>Respond</label><textarea value={d.respond} onChange={e => setD(d.id, "respond", e.target.value)} rows={2} placeholder="A question or something to do today" style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
               <div><label style={lbl}>Pray</label><textarea value={d.pray} onChange={e => setD(d.id, "pray", e.target.value)} rows={2} placeholder="A short prayer or prompt" style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
@@ -2061,41 +2064,69 @@ function signupLink(e) {
   return links.find(u => FORM_HOSTS.test(u)) || (words ? links[0] : null);
 }
 
-function CalendarList({ cal, limit = 0, emptyText, title = "Coming up", maxWidth = 400 }) {
+// Brand colors for BAND calendars: IMPACT blue, dGroups green, Events orange (gold for anything else)
+const CAL_COLORS = { blue: { bar: "#3d59a8", text: "#8ea3e3", label: "IMPACT Blue" }, green: { bar: "#4cad3b", text: "#74c464", label: "IMPACT Green" }, orange: { bar: "#e95e24", text: "#f08a5d", label: "IMPACT Orange" }, gold: { bar: "#e6b34a", text: "#e6b34a", label: "Gold" } };
+const calColor = c => CAL_COLORS[c] || CAL_COLORS.blue;
+const CAL_RANGES = [[14, "Next 2 weeks"], [31, "Next month"], [62, "Next 2 months"], [120, "Next 4 months"]];
+
+function CalendarList({ cal, emptyText, title = "Coming up", maxWidth = 400 }) {
   const [open, setOpen] = React.useState(null);
-  const [showAll, setShowAll] = React.useState(false);
+  const [range, setRange] = React.useState(14);
+  const [hidden, setHidden] = React.useState([]);
   if (!cal || !cal.configured) return null;
   const today = ymd();
+  const until = ymd(new Date(Date.now() + range * 864e5));
+  const cals = cal.calendars || [];
   const all = (cal.events || []).filter(e => (e.allDay ? (e.end || e.start) : e.start.slice(0, 10)) >= today || (e.end || "").slice(0, 10) >= today);
-  const list = limit && !showAll ? all.slice(0, limit) : all;
+  const list = all.filter(e => e.start.slice(0, 10) <= until && !hidden.includes(e.cal));
+  const later = all.filter(e => e.start.slice(0, 10) > until && !hidden.includes(e.cal)).length;
   const days = [];
   for (const e of list) {
     const day = e.allDay && e.start < today ? today : e.start.slice(0, 10);
     const last = days[days.length - 1];
     if (last && last.day === day) last.items.push(e); else days.push({ day, items: [e] });
   }
+  const toggle = id => setHidden(h => h.includes(id) ? h.filter(x => x !== id) : [...h, id]);
   return (
     <div style={{ width:"100%", maxWidth, boxSizing:"border-box", background:"#1f2023", border:"1px solid #34363a", borderRadius:14, padding:"14px 16px", marginBottom:14, textAlign:"left" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, flexWrap:"wrap" }}>
         <CalendarDays size={16} color="#8ea3e3" />
         <span style={{ fontSize:14, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{title}</span>
-        {cal.updated && <span style={{ marginLeft:"auto", fontSize:11, color:"#80848a" }}>from BAND</span>}
+        <select value={range} onChange={e => setRange(Number(e.target.value))} aria-label="How far ahead" style={{ marginLeft:"auto", background:"#161719", color:"#f2f1ee", border:"1px solid #34363a", borderRadius:8, padding:"5px 8px", fontSize:12.5, fontFamily:"'Inter', system-ui, sans-serif" }}>
+          {CAL_RANGES.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
+        </select>
       </div>
-      {days.length === 0 && <p style={{ margin:0, fontSize:13, color:"#80848a" }}>{emptyText || "Nothing on the calendar yet."}</p>}
+      {cals.length > 1 && (
+        <div role="group" aria-label="Calendars" style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
+          {cals.map(c => {
+            const on = !hidden.includes(c.id), col = calColor(c.color);
+            return (
+              <button key={c.id} onClick={() => toggle(c.id)} aria-pressed={on} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"4px 10px", borderRadius:14, border:`1px solid ${on ? col.bar : "#34363a"}`, background: on ? `${col.bar}22` : "none", color: on ? "#f2f1ee" : "#80848a", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                <span aria-hidden="true" style={{ width:9, height:9, borderRadius:"50%", background: on ? col.bar : "transparent", border:`2px solid ${col.bar}` }} />{c.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {days.length === 0 && <p style={{ margin:"0 0 6px", fontSize:13, color:"#80848a" }}>{all.length ? `Nothing in the ${CAL_RANGES.find(r => r[0] === range)[1].toLowerCase()}.` : (emptyText || "Nothing on the calendar yet.")}</p>}
       {days.map(({ day, items }) => (
         <div key={day} style={{ marginBottom:10 }}>
           <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color: day === today ? "#74c464" : "#80848a", marginBottom:4 }}>{calDayLabel(day)}</div>
           {items.map(e => {
             const isOpen = open === e.id;
             const more = e.desc;
+            const col = calColor(e.color);
             return (
-              <div key={e.id} style={{ borderLeft:`3px solid ${e.leadersOnly ? "#e6b34a" : "#3d59a8"}`, padding:"6px 0 6px 10px", marginBottom:4 }}>
+              <div key={e.id} style={{ borderLeft:`4px solid ${col.bar}`, padding:"6px 0 6px 10px", marginBottom:4 }}>
                 <button onClick={() => more && setOpen(isOpen ? null : e.id)} aria-expanded={more ? isOpen : undefined} style={{ display:"block", width:"100%", textAlign:"left", background:"none", border:"none", padding:0, cursor: more ? "pointer" : "default", fontFamily:"'Inter', system-ui, sans-serif" }}>
                   <div style={{ fontSize:14, fontWeight:600, color:"#f2f1ee", lineHeight:1.3 }}>
                     {e.title}
                     {e.leadersOnly && <span style={{ marginLeft:6, fontSize:10, fontWeight:700, color:"#e6b34a", border:"1px solid #e6b34a66", borderRadius:6, padding:"1px 5px", verticalAlign:"middle" }}>LEADERS</span>}
                   </div>
-                  <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>{calTime(e)}{e.location ? ` · ${e.location}` : ""}</div>
+                  <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>
+                    {calTime(e)}{e.location ? ` · ${e.location}` : ""}
+                    {cals.length > 1 && e.calName && <span style={{ color: col.text, fontWeight:600 }}> · {e.calName}</span>}
+                  </div>
                 </button>
                 {isOpen && e.desc && <div style={{ fontSize:13, color:"#d9d7d2", lineHeight:1.5, marginTop:6, whiteSpace:"pre-wrap" }}>{linkify(e.desc)}</div>}
                 {signupLink(e) && <a href={signupLink(e)} target="_blank" rel="noopener noreferrer" style={{ display:"inline-flex", alignItems:"center", gap:5, marginTop:7, background:"#4cad3b", color:"#101112", borderRadius:8, padding:"6px 12px", fontSize:13, fontWeight:700, textDecoration:"none", fontFamily:"'Inter', system-ui, sans-serif" }}>Register →</a>}
@@ -2104,9 +2135,9 @@ function CalendarList({ cal, limit = 0, emptyText, title = "Coming up", maxWidth
           })}
         </div>
       ))}
-      {limit > 0 && all.length > limit && (
-        <button onClick={() => setShowAll(v => !v)} style={{ background:"none", border:"none", color:"#74c464", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, fontFamily:"'Inter', system-ui, sans-serif" }}>
-          {showAll ? "Show less" : `See all ${all.length} events →`}
+      {later > 0 && range < 120 && (
+        <button onClick={() => setRange(CAL_RANGES.find(r => r[0] > range)[0])} style={{ background:"none", border:"none", color:"#74c464", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, fontFamily:"'Inter', system-ui, sans-serif" }}>
+          {later} more event{later === 1 ? "" : "s"} further out. Show {CAL_RANGES.find(r => r[0] > range)[1].toLowerCase()} →
         </button>
       )}
     </div>
@@ -2174,6 +2205,19 @@ function CalendarSetup() {
             <div><label style={lbl}>Name</label><input value={f.name} onChange={e => setF(f.id, "name", e.target.value)} placeholder="e.g. IMPACT Students" style={field} /></div>
             <div><label style={lbl}>BAND calendar link</label><input value={f.url} onChange={e => setF(f.id, "url", e.target.value)} placeholder="Paste the Export Band Calendars link" style={field} autoComplete="off" spellCheck={false} /></div>
             <div>
+              <label style={lbl}>Color</label>
+              <div role="radiogroup" aria-label="Calendar color" style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {Object.entries(CAL_COLORS).map(([k, c]) => {
+                  const on = (f.color || (/d-?group/i.test(f.name) ? "green" : /event/i.test(f.name) ? "orange" : "blue")) === k;
+                  return (
+                    <button key={k} role="radio" aria-checked={on} onClick={() => setF(f.id, "color", k)} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px", borderRadius:8, border:`1px solid ${on ? c.bar : C.border}`, background: on ? `${c.bar}22` : "none", color: on ? C.cream : C.muted, fontSize:12.5, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
+                      <span aria-hidden="true" style={{ width:12, height:12, borderRadius:"50%", background:c.bar }} />{c.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
               <label style={lbl}>Who sees these events</label>
               <div style={{ display:"flex", gap:6 }}>
                 {[["everyone", "Everyone (leaders, students, parents)"], ["leaders", "Leaders only"]].map(([v, l]) => (
@@ -2196,7 +2240,7 @@ function CalendarSetup() {
           <Plus size={14} style={{ marginRight:5 }} /> {feeds.length ? "Add another BAND calendar" : "Add your BAND calendar"}
         </button>
       )}
-      <p style={{ margin:"10px 0 0", fontSize:12, color:C.muted, lineHeight:1.5 }}>Have a separate leaders Band? Add its calendar too and set it to “Leaders only.”</p>
+      <p style={{ margin:"10px 0 0", fontSize:12, color:C.muted, lineHeight:1.5 }}>Add each BAND calendar separately (IMPACT, dGroups, Events) so each gets its own color: IMPACT Blue, IMPACT Green and IMPACT Orange. Have a separate leaders Band? Add it too and set it to “Leaders only.”</p>
       <div style={{ position:"sticky", bottom:0, background:C.bg, padding:"12px 0", marginTop:12, display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${C.border}`, flexWrap:"wrap" }}>
         <button onClick={save} disabled={!dirty} style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.5 }}>Save calendar</button>
         {!dirty && feeds.length > 0 && <button onClick={refresh} style={S.cancelBtn}>Refresh now</button>}
@@ -2390,10 +2434,8 @@ function checkInReasons(p, now = Date.now()) {
   if (fam) out.push({ key: "fam", label: fam.dontMention ? "Family shared a request (don’t mention it)" : "Their family shared a request", color: "#b49ad0", rank: 0 });
   if ((p.reqTimes || []).some(t => now - t < 7 * DAY)) out.push({ key: "req", label: "New prayer request this week", color: "#8ea3e3", rank: 1 });
   const b = getBirthdayStatus(p.birthday);
-  if (b && (b.today || b.urgent || b.label)) {
-    const days = (() => { if (!p.birthday) return 99; const [m, d] = p.birthday.split("-").map(Number); const t = new Date(); t.setHours(0,0,0,0); let x = new Date(t.getFullYear(), m - 1, d); if (x < t) x.setFullYear(t.getFullYear() + 1); return Math.round((x - t) / DAY); })();
-    if (days <= 7) out.push({ key: "bday", label: days === 0 ? "Birthday today 🎂" : `Birthday in ${days} day${days === 1 ? "" : "s"} 🎂`, color: "#e6b34a", rank: 2 });
-  }
+  // Birthday month only; nudge in the week before and on the day
+  if (b && !b.past && b.diff <= 7) out.push({ key: "bday", label: b.diff === 0 ? "Birthday today 🎂" : `Birthday ${formatBirthday(p.birthday)} 🎂`, color: "#e6b34a", rank: 2 });
   const g = (p.gospelLog || []).find(x => now - (x.at || 0) < 14 * DAY);
   if (g) out.push({ key: "gospel", label: g.outcome === "trusted" ? "A friend trusted Jesus! Celebrate 🎉" : "Shared the Gospel. Ask how it went", color: C.orange, rank: 1 });
   const since = p.prayedAt ? now - p.prayedAt : Infinity;
@@ -2439,7 +2481,7 @@ function CheckInCard({ people, myGroupId, groupName, isAdmin, goToPerson }) {
               <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderTop:`1px solid ${C.faint}`, opacity: isDone ? 0.5 : 1 }}>
                 <Avatar person={p} size={34} />
                 <button onClick={() => goToPerson(p.id)} style={{ flex:1, minWidth:0, textAlign:"left", background:"none", border:"none", padding:0, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
-                  <div style={{ fontSize:14, color:C.cream, fontWeight:600, textDecoration: isDone ? "line-through" : "none" }}>{p.name}</div>
+                  <div style={{ fontSize:14, color:C.cream, fontWeight:600, textDecoration: isDone ? "line-through" : "none" }}>{dn(p.name)}</div>
                   <div style={{ fontSize:12, color: reasons[0].color, lineHeight:1.35 }}>{reasons.map(r => r.label).join(" · ")}</div>
                 </button>
                 <button onClick={() => toggle(p.id)} aria-pressed={isDone} title={isDone ? "Undo" : "I checked in"} style={{ flexShrink:0, background: isDone ? C.accentBg : "none", border:`1px solid ${isDone ? C.accent : C.border}`, color: isDone ? C.accentLight : C.muted, borderRadius:8, padding:"6px 9px", fontSize:12, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{isDone ? "✓ Done" : "Checked in"}</button>
@@ -2450,6 +2492,147 @@ function CheckInCard({ people, myGroupId, groupName, isAdmin, goToPerson }) {
           <div style={{ fontSize:11.5, color:C.muted, paddingTop:6 }}>Text, call, or catch them at youth group. “Checked in” is just for you and resets each Monday.</div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Access (admin): individual leader codes + activity log ── */
+function friendlyBrowser(ua) {
+  ua = String(ua || "");
+  if (!ua) return "Unknown browser";
+  const dev = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Macintosh|Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /CrOS/.test(ua) ? "Chromebook" : /Linux/.test(ua) ? "Linux" : "";
+  const br = /EdgA?\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /FxiOS|Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
+  return dev ? `${br} on ${dev}` : br;
+}
+const ROLE_LABEL = { admin: "Admin", team: "Leader", student: "Student", parent: "Parent", "": "—" };
+
+function LeaderCodes() {
+  const [list, setList] = React.useState(null);
+  const [name, setName] = React.useState("");
+  const [msg, setMsg] = React.useState("");
+  const [shown, setShown] = React.useState(null); // { id, name, code } shown once after making a code
+  const [confirm, setConfirm] = React.useState(null); // { id, action }
+  const [busy, setBusy] = React.useState(false);
+  const load = React.useCallback(() => { fetch("/api/leaders", { cache: "no-store" }).then(r => r.ok ? r.json() : []).then(setList).catch(() => setList([])); }, []);
+  React.useEffect(() => { load(); }, [load]);
+  async function call(body) {
+    setBusy(true); setMsg("");
+    try {
+      const r = await fetch("/api/leaders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "That didn’t work.");
+      if (d.code) setShown({ id: d.leader.id, name: d.leader.name, code: d.code, copied: false });
+      setConfirm(null); load();
+      return d;
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(false); }
+  }
+  async function add() { if (name.trim().length < 2) return setMsg("Enter the leader’s first and last name."); const d = await call({ action: "add", name: name.trim() }); if (d) setName(""); }
+  async function copy(text) { try { await navigator.clipboard.writeText(text); setShown(s => ({ ...s, copied: true })); } catch (_e) {} }
+  const when = t => t ? new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "never";
+  const active = (list || []).filter(l => l.active), revoked = (list || []).filter(l => !l.active);
+  const smallBtn = { background:"none", border:`1px solid ${C.border}`, color:C.cream, borderRadius:8, padding:"5px 9px", fontSize:12, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif", whiteSpace:"nowrap" };
+  const row = l => (
+    <div key={l.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderTop:`1px solid ${C.faint}`, flexWrap:"wrap" }}>
+      <div style={{ flex:1, minWidth:150 }}>
+        <div style={{ fontSize:14, fontWeight:600, color: l.active ? C.cream : C.muted, textDecoration: l.active ? "none" : "line-through" }}>{l.name}</div>
+        <div style={{ fontSize:11.5, color:C.muted }}>{l.active ? `Code made ${when(l.codeAt)} · last sign-in ${when(l.lastSignIn)}` : `Revoked ${when(l.revokedAt)}`}</div>
+      </div>
+      {confirm && confirm.id === l.id ? (
+        <span style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{ fontSize:12, color:C.muted }}>{confirm.action === "revoke" ? "Revoke and sign them out?" : confirm.action === "newcode" ? "Old code stops working. Continue?" : "Remove from the list?"}</span>
+          <button disabled={busy} onClick={() => call({ action: confirm.action, id: l.id })} style={{ ...smallBtn, background: confirm.action === "newcode" ? C.accent : "#8a5050", color: confirm.action === "newcode" ? "#101112" : "#fff", border:"none" }}>Yes</button>
+          <button onClick={() => setConfirm(null)} style={smallBtn}>Cancel</button>
+        </span>
+      ) : l.active ? (
+        <span style={{ display:"flex", gap:6 }}>
+          <button onClick={() => setConfirm({ id: l.id, action: "newcode" })} style={smallBtn}>New code</button>
+          <button onClick={() => setConfirm({ id: l.id, action: "revoke" })} style={{ ...smallBtn, color:"#e07a5f" }}>Revoke</button>
+        </span>
+      ) : (
+        <span style={{ display:"flex", gap:6 }}>
+          <button onClick={() => setConfirm({ id: l.id, action: "newcode" })} style={smallBtn}>Give a new code</button>
+          <button onClick={() => setConfirm({ id: l.id, action: "delete" })} style={{ ...smallBtn, color:C.muted }}>Remove</button>
+        </span>
+      )}
+    </div>
+  );
+  return (
+    <div style={{ ...S.reportBox, display:"flex", flexDirection:"column", gap:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8 }}><Lock size={15} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Leader codes</p></div>
+      <p style={{ margin:0, fontSize:12.5, color:C.muted, lineHeight:1.5 }}>Each leader signs in at <b style={{ color:C.cream }}>/leaders</b> with their own code. Codes are stored scrambled, so you’ll see each one only once, right after you make it. Revoking a code signs that leader out right away.</p>
+      <div style={{ display:"flex", gap:8 }}>
+        <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && add()} placeholder="Leader’s first and last name" aria-label="New leader name" style={{ ...S.addInput, margin:0, fontSize:13.5 }} />
+        <button onClick={add} disabled={busy} style={S.reqAddBtn}>Add + make code</button>
+      </div>
+      {msg && <p style={{ margin:0, fontSize:12.5, color:"#e07a5f" }}>{msg}</p>}
+      {shown && (
+        <div role="status" style={{ background:"#18241a", border:`1px solid ${C.accent}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ fontSize:13, color:C.cream }}>Code for <b>{shown.name}</b>. Copy it now, it won’t be shown again:</div>
+          <div style={{ fontSize:26, fontWeight:800, letterSpacing:"0.08em", color:"#f2f1ee", fontFamily:"ui-monospace, Menlo, Consolas, monospace", userSelect:"all" }}>{shown.code}</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <button onClick={() => copy(shown.code)} style={{ ...S.confirmBtn, padding:"8px 14px" }}>{shown.copied ? "Copied ✓" : "Copy code"}</button>
+            <button onClick={() => copy(`Hi ${shown.name.split(" ")[0]}! Here’s your Let’s Pray leader code: ${shown.code}\nSign in at ${location.origin}/leaders. It’s just for you, so please don’t share it.`)} style={S.cancelBtn}>Copy as a text message</button>
+            <button onClick={() => setShown(null)} style={{ ...S.cancelBtn, marginLeft:"auto" }}>Done</button>
+          </div>
+        </div>
+      )}
+      {!list ? <p style={S.reportEmpty}>Loading…</p> : (
+        <div>
+          {active.length === 0 && <p style={{ ...S.reportEmpty, margin:"6px 0" }}>No leaders yet. Add your first one above.</p>}
+          {active.map(row)}
+          {revoked.length > 0 && <div style={{ fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:700, margin:"14px 0 0" }}>Revoked</div>}
+          {revoked.map(row)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditLog() {
+  const [items, setItems] = React.useState(null);
+  const [cursor, setCursor] = React.useState(null);
+  const [filter, setFilter] = React.useState("all");
+  const [err, setErr] = React.useState("");
+  const load = React.useCallback(async (more) => {
+    try {
+      const r = await fetch(`/api/audit${more && cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { cache: "no-store" });
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      setItems(prev => more ? [...(prev || []), ...d.items] : d.items); setCursor(d.cursor); setErr("");
+    } catch (_e) { setErr("Couldn’t load the activity log."); setItems(prev => prev || []); }
+  }, [cursor]);
+  React.useEffect(() => { load(false); }, []); // eslint-disable-line
+  const shownItems = (items || []).filter(x => filter === "all" ? true : filter === "signin" ? x.e === "signin" : filter === "failed" ? x.e === "signin-failed" : x.e === "roster");
+  const what = x => x.e === "roster" ? "Opened the Roster" : x.e === "signin-failed" ? "Wrong code" : "Signed in";
+  return (
+    <div style={{ ...S.reportBox, display:"flex", flexDirection:"column", gap:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+        <InboxIcon size={15} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Activity log</p>
+        <select value={filter} onChange={e => setFilter(e.target.value)} aria-label="Show" style={{ ...S.gradeSelect, marginLeft:"auto" }}>
+          <option value="all">Everything</option><option value="signin">Sign-ins</option><option value="failed">Wrong codes</option><option value="roster">Roster views</option>
+        </select>
+        <button onClick={() => load(false)} style={S.cancelBtn}>Refresh</button>
+      </div>
+      <p style={{ margin:0, fontSize:12, color:C.muted, lineHeight:1.5 }}>Sign-ins and Roster views from the last 90 days. Older entries delete themselves. Only admins can see this.</p>
+      {err && <p style={{ margin:0, fontSize:12.5, color:"#e07a5f" }}>{err}</p>}
+      {!items ? <p style={S.reportEmpty}>Loading…</p> : shownItems.length === 0 ? <p style={S.reportEmpty}>Nothing here yet.</p> : (
+        <ul style={{ listStyle:"none", margin:0, padding:0 }}>
+          {shownItems.map(x => (
+            <li key={x.id} style={{ padding:"9px 0", borderTop:`1px solid ${C.faint}`, display:"flex", flexDirection:"column", gap:2 }}>
+              <div style={{ display:"flex", gap:8, alignItems:"baseline", flexWrap:"wrap" }}>
+                <span style={{ fontSize:13.5, fontWeight:600, color: x.ok === false ? "#e07a5f" : C.cream }}>{what(x)}</span>
+                <span style={{ fontSize:13.5, color:C.cream }}>{x.n || (x.r ? ROLE_LABEL[x.r] : "")}</span>
+                <span style={{ marginLeft:"auto", fontSize:12, color:C.muted, whiteSpace:"nowrap" }}>{new Date(x.t).toLocaleString("en-US", { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</span>
+              </div>
+              <div style={{ fontSize:12, color:C.muted, lineHeight:1.45 }}>
+                {ROLE_LABEL[x.r || ""] || x.r} · IP <span style={{ fontFamily:"ui-monospace, Menlo, Consolas, monospace" }}>{x.ip || "unknown"}</span> · <span title={x.ua}>{friendlyBrowser(x.ua)}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {cursor && <button onClick={() => load(true)} style={{ ...S.cancelBtn, alignSelf:"flex-start" }}>Show older</button>}
     </div>
   );
 }
@@ -2725,7 +2908,7 @@ function PrayerWall() {
           <div key={p.id} style={{ background: happy ? "#18241a" : "#1f2023", border:`1px solid ${happy ? "#4cad3b66" : "#34363a"}`, borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:10 }}>
             {happy && <div style={{ fontSize:11, letterSpacing:"0.12em", textTransform:"uppercase", fontWeight:800, color:"#74c464" }}>{p.praise ? "🎉 Praise report" : "🎉 Prayer answered!"}</div>}
             <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
-              <span style={{ fontSize:15, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
+              <span style={{ fontSize:15, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>{dn(p.name)}</span>
               <span style={{ marginLeft:"auto", fontSize:12, color:"#80848a" }}>{timeAgo(p.createdAt)}</span>
             </div>
             <p style={{ margin:0, fontSize:15, color: p.answered ? "#a9ada9" : "#f2f1ee", lineHeight:1.5, whiteSpace:"pre-wrap" }}>{p.text}</p>
@@ -2750,7 +2933,7 @@ function familyWallItems(people) {
   const cutoff = Date.now() - FAMILY_WALL_DAYS * 24 * 60 * 60 * 1000;
   return people
     .filter(p => p.active !== false)
-    .flatMap(p => (p.familyRequests || []).filter(f => (f.at || 0) >= cutoff).map(f => ({ ...f, personId: p.id, student: p.name })))
+    .flatMap(p => (p.familyRequests || []).filter(f => (f.at || 0) >= cutoff).map(f => ({ ...f, personId: p.id, student: dn(p.name) })))
     .sort((a, b) => b.at - a.at);
 }
 
@@ -2800,8 +2983,8 @@ function LeaderWall({ studentPosts, onStudentPrayed, people, setPeople, goToPers
       {tab === "answered" ? (() => {
         const cutoff = Date.now() - 90 * 864e5;
         const items = [
-          ...people.filter(p => p.active !== false).flatMap(p => (p.answered || []).filter(a => (a.at || 0) >= cutoff).map(a => ({ key: a.id, who: p.name, personId: p.id, request: a.text, update: a.update, at: a.at, by: a.by }))),
-          ...studentPosts.filter(p => p.praise || p.answered).map(p => ({ key: "w" + p.id, who: p.name, request: p.praise ? "" : p.text, update: p.praise ? p.text : (p.answered.update || ""), at: p.praise ? p.createdAt : p.answered.at, by: "wall" })),
+          ...people.filter(p => p.active !== false).flatMap(p => (p.answered || []).filter(a => (a.at || 0) >= cutoff).map(a => ({ key: a.id, who: dn(p.name), personId: p.id, request: a.text, update: a.update, at: a.at, by: a.by }))),
+          ...studentPosts.filter(p => p.praise || p.answered).map(p => ({ key: "w" + p.id, who: dn(p.name), request: p.praise ? "" : p.text, update: p.praise ? p.text : (p.answered.update || ""), at: p.praise ? p.createdAt : p.answered.at, by: "wall" })),
         ].sort((a, b) => b.at - a.at);
         return (
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -2830,7 +3013,7 @@ function LeaderWall({ studentPosts, onStudentPrayed, people, setPeople, goToPers
           {studentPosts.filter(p => !p.praise && !p.answered).map(p => (
             <div key={p.id} style={{ ...card, width:"100%", boxSizing:"border-box" }}>
               <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
-                <span style={{ fontSize:15, fontWeight:700, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
+                <span style={{ fontSize:15, fontWeight:700, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{dn(p.name)}</span>
                 <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>{timeAgo(p.createdAt)}</span>
               </div>
               <p style={{ margin:0, fontSize:14.5, color:C.cream, lineHeight:1.5, whiteSpace:"pre-wrap" }}>{p.text}</p>
@@ -2847,7 +3030,7 @@ function LeaderWall({ studentPosts, onStudentPrayed, people, setPeople, goToPers
           {family.map(f => (
             <div key={f.id} style={{ ...card, borderColor:"#b49ad033" }}>
               <div style={{ display:"flex", alignItems:"baseline", gap:6, flexWrap:"wrap" }}>
-                <span style={{ fontSize:14.5, fontWeight:700, color:C.cream }}>{f.from}</span>
+                <span style={{ fontSize:14.5, fontWeight:700, color:C.cream }}>{dn(f.from)}</span>
                 <span style={{ fontSize:12.5, color:C.muted }}>for</span>
                 <button onClick={() => goToPerson(f.personId)} style={{ background:"none", border:"none", padding:0, color:"#b49ad0", fontSize:13.5, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>{f.student}</button>
                 <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>{timeAgo(f.at)}</span>
@@ -3641,6 +3824,14 @@ function AppMain({ settings, role, onStatus }) {
     return () => { window.removeEventListener("lp-devo-updated", load); clearInterval(t); };
   }, []);
   const [seriesPane, setSeriesPane] = useState("series");
+  // Record Roster opens in the admin activity log (once every 10 minutes per phone)
+  useEffect(() => {
+    if (view !== "roster") return;
+    const k = "lp-roster-logged", last = Number(lsGet(k)) || 0;
+    if (Date.now() - last < 10 * 60 * 1000) return;
+    lsSet(k, String(Date.now()));
+    fetch("/api/audit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "roster" }) }).catch(() => {});
+  }, [view]);
   const [events] = useEvents();
   const calendar = useCalendar(role);
   function prayThroughEvent(id) { setFilter(`ev:${id}`); setCardIdx(0); window.scrollTo(0, 0); }
@@ -4262,7 +4453,7 @@ function AppMain({ settings, role, onStatus }) {
     try {
       const res = await apiAuth("login", { code: adminPwInput });
       if (res.role !== "admin") {
-        setAdminPwError("That’s the team code — enter the admin password.");
+        setAdminPwError("That’s a leader code — enter the admin password.");
         setAdminPwInput("");
         return;
       }
@@ -4316,6 +4507,10 @@ function AppMain({ settings, role, onStatus }) {
         <div style={{ ...S.progressFill, width: activePeople.length ? `${Math.min(100, ((prayedCount >= activePeople.length ? praySessionCount : prayedCount) / activePeople.length) * 100)}%` : "0%" }} />
       </div>
 
+      <div style={{ display:"flex", justifyContent:"flex-end", padding:"4px 16px 0", fontSize:11.5, color:C.muted }}>
+        Signed in as <b style={{ color:C.cream, fontWeight:600, marginLeft:4 }}>{adminAuthed ? "Admin" : (settings.leaderName || "Leader")}</b>
+      </div>
+
       {/* Tabs */}
       <nav style={S.tabs}>
         {[["pray","Pray"],["wall","Wall"],["lessons","Lessons"],["devos","Devos"],["calendar","Calendar"],["week","Week"],["roster","Roster"]].map(([v, label]) => (
@@ -4324,7 +4519,7 @@ function AppMain({ settings, role, onStatus }) {
             {v === "wall" && wallNew > 0 && view !== "wall" && <span style={S.tabBadge}>{wallNew}</span>}
           </button>
         ))}
-        {adminAuthed && [["inbox","Inbox"],["series","Teach"],["people","People"],["report","Report"],["import","Import"]].map(([v, label]) => (
+        {adminAuthed && [["inbox","Inbox"],["series","Teach"],["people","People"],["access","Access"],["report","Report"],["import","Import"]].map(([v, label]) => (
           <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
             {label}
             {v === "inbox" && submissions.length > 0 && <span style={S.tabBadge}>{submissions.length}</span>}
@@ -4436,7 +4631,7 @@ function AppMain({ settings, role, onStatus }) {
                 {todayBdayPrayed.map(({ person }) => (
                   <div key={person.id} style={{ position:"relative", width:"100%", marginBottom:8 }}>
                     <button onClick={() => { dismissBday(person.id); setPinnedPersonId(person.id); setReqFor(null); setReady(true); setPeople(p => [...p]); }} style={S.bdayBanner}>
-                      <Cake size={14} style={{marginRight:6, flexShrink:0, verticalAlign:"middle"}} /> Today is {person.name}{"’"}s birthday! Tap to pray.
+                      <Cake size={14} style={{marginRight:6, flexShrink:0, verticalAlign:"middle"}} /> Today is {dn(person.name)}{"’"}s birthday! Tap to pray.
                     </button>
                     <button onClick={e => { e.stopPropagation(); dismissBday(person.id); setPeople(p => [...p]); }} style={S.bdayDismiss}>{"✕"}</button>
                   </div>
@@ -4475,7 +4670,7 @@ function AppMain({ settings, role, onStatus }) {
                   {todayBdayPrayed.map(({ person }) => (
                     <div key={person.id} style={{ position:"relative", width:"100%", marginBottom:8 }}>
                       <button onClick={() => { dismissBday(person.id); setPinnedPersonId(person.id); setReqFor(null); setPeople(p => [...p]); }} style={S.bdayBanner}>
-                        <Cake size={14} style={{marginRight:6, flexShrink:0, verticalAlign:"middle"}} /> Today is {person.name}{"’"}s birthday! Tap to pray.
+                        <Cake size={14} style={{marginRight:6, flexShrink:0, verticalAlign:"middle"}} /> Today is {dn(person.name)}{"’"}s birthday! Tap to pray.
                       </button>
                       <button onClick={e => { e.stopPropagation(); dismissBday(person.id); setPeople(p => [...p]); }} style={S.bdayDismiss}>{"✕"}</button>
                     </div>
@@ -4538,7 +4733,7 @@ function AppMain({ settings, role, onStatus }) {
                       </div>
 
                       {/* Name — primary */}
-                      <h2 style={S.cardName}>{current?.name}</h2>
+                      <h2 style={S.cardName}>{dn(current?.name)}</h2>
 
                       {/* Birthday — secondary info, below name */}
                       {bdayStatus && (
@@ -4726,7 +4921,7 @@ function AppMain({ settings, role, onStatus }) {
                             {dropList.map(p => (
                               <button key={p.id} onClick={() => selectFromDropdown(p.id)}
                                 style={{ ...S.ddItem, ...(withinWeek(p.prayedAt) ? S.ddItemPrayed : {}) }}>
-                                <span>{p.name}</span>
+                                <span>{dn(p.name)}</span>
                                 <span style={S.ddItemMeta}>
                                   {withinWeek(p.prayedAt) ? "✓ prayed" : ""}
                                   {p.group ? ` ${groupLabel(p.group)}` : ""}
@@ -4791,7 +4986,7 @@ function AppMain({ settings, role, onStatus }) {
               {upcomingBdays.map(({ person, diff, date }) => (
                 <div key={person.id} onClick={() => goToPerson(person.id)} style={{ ...S.weekRow, ...(diff === 0 ? { background: C.faint } : {}), cursor: "pointer" }}>
                   <div>
-                    <div style={S.weekName}>{person.name}</div>
+                    <div style={S.weekName}>{dn(person.name)}</div>
                     <div style={{ ...S.weekMeta, display:"flex", alignItems:"center", gap:4 }}>{diff === 0 && <Cake size={11} color={C.accent} />}{diff === 0 ? "Today!" : diff === 1 ? "Tomorrow" : date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
@@ -4813,7 +5008,7 @@ function AppMain({ settings, role, onStatus }) {
               : prayedThis.map(p => (
                 <div key={p.id} onClick={() => goToPerson(p.id)} style={{ ...S.weekRow, cursor: "pointer" }}>
                   <div>
-                    <div style={{ ...S.weekName, display:"flex", alignItems:"center", gap:6 }}>{p.name}{(p.weekPrayCount || 0) >= 2 ? <span style={{ fontSize:11, color:C.accent, fontWeight:700, background:C.faint, padding:"1px 6px", borderRadius:8 }}>x{p.weekPrayCount}</span> : null}</div>
+                    <div style={{ ...S.weekName, display:"flex", alignItems:"center", gap:6 }}>{dn(p.name)}{(p.weekPrayCount || 0) >= 2 ? <span style={{ fontSize:11, color:C.accent, fontWeight:700, background:C.faint, padding:"1px 6px", borderRadius:8 }}>x{p.weekPrayCount}</span> : null}</div>
                     <div style={S.weekMeta}>{timeAgo(p.prayedAt)}</div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -4838,7 +5033,7 @@ function AppMain({ settings, role, onStatus }) {
             ) : notPrayedThis.map(p => (
               <div key={p.id} onClick={() => goToPerson(p.id)} style={{ ...S.weekRow, cursor: "pointer" }}>
                 <div>
-                  <div style={{ ...S.weekName, color: C.muted }}>{p.name}</div>
+                  <div style={{ ...S.weekName, color: C.muted }}>{dn(p.name)}</div>
                   {p.prayedAt && <div style={S.weekMeta}>Last: {timeAgo(p.prayedAt)}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
@@ -4856,7 +5051,7 @@ function AppMain({ settings, role, onStatus }) {
         <div style={S.peopleWrap}>
           {!settings.teamCodeSet && (
             <div style={{ background:"#2a1a12", border:`1px solid ${C.orange}`, borderRadius:12, padding:"12px 14px", fontSize:13, color:C.cream, lineHeight:1.5, marginBottom:4 }}>
-              <b>One more step:</b> set a team code at the bottom of this page so your leaders can sign in.
+              <b>One more step:</b> give each leader their own code in the <b>Access</b> tab so they can sign in.
             </div>
           )}
           {/* ── Add person form ── */}
@@ -5152,7 +5347,7 @@ function AppMain({ settings, role, onStatus }) {
 
           {/* Sort filter */}
           <div style={{ display:"flex", gap:16, marginBottom:12, justifyContent:"center" }}>
-            {[["name","A–Z"],["grade","Grade"],["birthday","Birthday"]].map(([val, label]) => (
+            {[["name","A–Z"],["grade","Grade"]].map(([val, label]) => (
               <button key={val} onClick={() => setRosterSort(val)} style={{ background:"none", border:"none", borderBottom: rosterSort === val ? `2px solid ${C.accent}` : "2px solid transparent", color: rosterSort === val ? C.cream : C.muted, fontSize:13, fontWeight: rosterSort === val ? 500 : 400, padding:"2px 0", cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>
                 {label}
               </button>
@@ -5169,35 +5364,20 @@ function AppMain({ settings, role, onStatus }) {
                   const gb = Number(b.grade) || 99;
                   return ga !== gb ? ga - gb : a.name.localeCompare(b.name);
                 }
-                if (rosterSort === "birthday") {
-                  // Sort by days until next birthday (soonest first, just-passed at end)
-                  const daysUntil = (bday) => {
-                    if (!bday) return 9999;
-                    const [m, d] = bday.split("-").map(Number);
-                    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-                    const thisYear = new Date(now.getFullYear(), m - 1, d);
-                    let diff = Math.ceil((thisYear - now) / 86400000);
-                    if (diff < 0) diff += 365; // already passed this year — push to end
-                    return diff;
-                  };
-                  const da = daysUntil(a.birthday);
-                  const db = daysUntil(b.birthday);
-                  return da !== db ? da - db : a.name.localeCompare(b.name);
-                }
                 return a.name.localeCompare(b.name);
               })
               .map(p => {
-                const bdayFmt = p.birthday ? (() => { const [m, d] = p.birthday.split("-"); const date = new Date(2000, parseInt(m)-1, parseInt(d)); return date.toLocaleDateString("en-US", { month:"short", day:"numeric" }); })() : null;
+                const bday = getBirthdayStatus(p.birthday); // only during their birthday month
                 return (
                   <div key={p.id} style={{ display:"flex", alignItems:"center", padding:"11px 14px", background:C.surface, borderRadius:8, gap:12 }}>
                     {/* Photo — tap to add or change */}
-                    <button onClick={() => pickPhoto(p.id)} style={S.avatarBtn} title={p.photo ? "Change photo" : "Add photo"} aria-label={p.photo ? `Change photo for ${p.name}` : `Add photo for ${p.name}`} disabled={photoBusy === p.id}>
+                    <button onClick={() => pickPhoto(p.id)} style={S.avatarBtn} title={p.photo ? "Change photo" : "Add photo"} aria-label={p.photo ? `Change photo for ${dn(p.name)}` : `Add photo for ${dn(p.name)}`} disabled={photoBusy === p.id}>
                       <Avatar person={p} size={44} />
                       <span style={S.avatarCam}>{photoBusy === p.id ? <RefreshCw size={9} /> : <Camera size={9} />}</span>
                     </button>
                     {/* Text — left aligned below name */}
                     <div style={{ display:"flex", flexDirection:"column", gap:3, flex:1, minWidth:0 }}>
-                      <span style={{ fontSize:15, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{p.name}</span>
+                      <span style={{ fontSize:15, color:C.cream, fontFamily:"'Montserrat', system-ui, sans-serif" }}>{dn(p.name)}</span>
                       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                         {p.type === "student" && p.grade && (
                           <span style={{ fontSize:13, color:C.muted, fontWeight:600 }}>{ordinal(p.grade)} Grade</span>
@@ -5205,7 +5385,7 @@ function AppMain({ settings, role, onStatus }) {
                         {p.type === "leader" && p.group && (
                           <span style={{ fontSize:13, color:C.muted, fontWeight:600 }}>{groupLabel(p.group)}</span>
                         )}
-                        {bdayFmt && <span style={{ fontSize:13, color:C.muted, display:"flex", alignItems:"center", gap:3 }}><Cake size={12} />{bdayFmt}</span>}
+                        {bday && <span style={{ fontSize:12.5, color:"#e6b34a", display:"flex", alignItems:"center", gap:3 }}><Cake size={12} />{bday.today ? "Birthday today! Pray for them" : bday.past ? `Birthday was ${formatBirthday(p.birthday)}` : `Birthday ${formatBirthday(p.birthday)}. Pray for them`}</span>}
                         {p.staff && <span style={{ fontSize:12, color:"#e6b34a", fontWeight:600 }}>Staff</span>}
                         {sgIds(p).map(groupName).filter(Boolean).length > 0 && <span style={{ fontSize:13, color:C.muted, display:"flex", alignItems:"center", gap:3 }}><Users size={12} />{sgIds(p).map(groupName).filter(Boolean).join(", ")}</span>}
                       </div>
@@ -5237,6 +5417,13 @@ function AppMain({ settings, role, onStatus }) {
       )}
 
       {/* ─── INBOX ─── */}
+      {view === "access" && adminAuthed && (
+        <div style={{ ...S.importWrap, gap:16 }}>
+          <LeaderCodes />
+          <AuditLog />
+        </div>
+      )}
+
       {view === "inbox" && adminAuthed && (
         <InboxView items={submissions} people={people} setPeople={setPeople} onRemove={removeSubmissions} studentCodeSet={!!settings.studentCodeSet} parentCodeSet={!!settings.parentCodeSet} />
       )}

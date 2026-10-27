@@ -1,4 +1,28 @@
-import { loadSettings, publicSettings } from "../../lib/auth.js";
+import { loadSettings, publicSettings, shortName } from "../../lib/auth.js";
+
+// What leaders get: first name + last initial, and a birthday only during that person's birthday month.
+// Full names and every birthday stay stored; only admins receive them.
+const etMonth = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).slice(5, 7);
+function forLeaders(p) {
+  const month = etMonth();
+  return {
+    ...p,
+    name: shortName(p.name),
+    birthday: p.birthday && String(p.birthday).slice(0, 2) === month ? p.birthday : "",
+    familyRequests: (p.familyRequests || []).map(f => ({ ...f, from: shortName(f.from) })),
+  };
+}
+// When a leader saves, keep the stored full name, birthday and parent names (they only ever had the short versions)
+function keepPrivate(incoming, stored) {
+  if (!stored) return incoming;
+  const fromById = Object.fromEntries((stored.familyRequests || []).map(f => [f.id, f.from]));
+  return {
+    ...incoming,
+    name: stored.name,
+    birthday: stored.birthday || "",
+    familyRequests: (incoming.familyRequests || []).map(f => (f.id in fromById ? { ...f, from: fromById[f.id] } : f)),
+  };
+}
 
 export async function onRequest(context) {
   const { request, env, data: ctxData } = context;
@@ -184,7 +208,10 @@ export async function onRequest(context) {
   // People endpoint (default)
   if (request.method === "GET") {
     const data = await env.INTERCEDE_KV.get("people");
-    return new Response(data || "[]", { headers });
+    if (role === "admin") return new Response(data || "[]", { headers });
+    let list = [];
+    try { list = JSON.parse(data || "[]"); } catch (_e) {}
+    return new Response(JSON.stringify(Array.isArray(list) ? list.map(forLeaders) : []), { headers });
   }
 
   if (request.method === "POST") {
@@ -230,7 +257,8 @@ export async function onRequest(context) {
     const merged = incoming.map(p => {
       const s = storedMap[p.id];
       if (!s) return p;
-      return (p.updatedAt || 0) >= (s.updatedAt || 0) ? p : s;
+      const take = (p.updatedAt || 0) >= (s.updatedAt || 0) ? p : s;
+      return role === "admin" || take === s ? take : keepPrivate(take, s);
     });
 
     for (const s of stored) {
