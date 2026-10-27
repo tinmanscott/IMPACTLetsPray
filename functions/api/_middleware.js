@@ -19,6 +19,7 @@ function requiredRole(path, url, method) {
     return "team"; // people: view + mark prayed (deletes are checked again in data.js)
   }
   if (path === "/api/leaders") return "admin"; // individual leader codes
+  if (path === "/api/onechurch") return method === "POST" ? "team" : "admin"; // One Church sync: leaders' apps can trigger the weekly check (checked again in onechurch.js)
   if (path === "/api/audit") return method === "GET" ? "admin" : "team"; // admin reads the log; leaders' Roster opens are recorded
   if (path === "/api/devos") return method === "GET" ? "team" : "public"; // anyone can check off a devo; only leaders see the counts
   if (path === "/api/calendar") return method === "GET" && !url.searchParams.get("action") ? "submit" : "admin"; // BAND calendar: everyone sees it; admin sets it up

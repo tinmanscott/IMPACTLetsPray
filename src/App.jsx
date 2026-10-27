@@ -2432,6 +2432,7 @@ function checkInReasons(p, now = Date.now()) {
   const out = [];
   const fam = (p.familyRequests || []).find(f => now - (f.at || 0) < 7 * DAY);
   if (fam) out.push({ key: "fam", label: fam.dontMention ? "Family shared a request (don’t mention it)" : "Their family shared a request", color: "#b49ad0", rank: 0 });
+  if (p.firstVisit && now - p.firstVisit < 14 * DAY) out.push({ key: "new", label: "New at IMPACT! Reach out this week", color: "#74c464", rank: 0 });
   if ((p.reqTimes || []).some(t => now - t < 7 * DAY)) out.push({ key: "req", label: "New prayer request this week", color: "#8ea3e3", rank: 1 });
   const b = getBirthdayStatus(p.birthday);
   // Birthday month only; nudge in the week before and on the day
@@ -3225,6 +3226,205 @@ function matchName(item) {
   return item.name;
 }
 
+/* ── One Church check-ins → Inbox ── */
+async function ocCall(body) {
+  const r = await fetch("/api/onechurch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false) throw new Error(d.error || "Couldn’t reach One Church.");
+  return d;
+}
+
+function OneChurchPanel({ onSynced }) {
+  const [cfg, setCfg] = React.useState(null);
+  const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState("");
+  const [msg, setMsg] = React.useState("");
+  const [test, setTest] = React.useState(null);
+  const [picked, setPicked] = React.useState([]);
+  const schoolStart = (() => { const d = new Date(); const y = d.getMonth() >= 7 ? d.getFullYear() : d.getFullYear() - 1; return `${y}-09-01`; })();
+  const [since, setSince] = React.useState(schoolStart);
+  const [progress, setProgress] = React.useState(null); // { done, total }
+  const load = React.useCallback(() => fetch("/api/onechurch", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(d => { if (d) { setCfg(d); setPicked(d.events || []); } }).catch(() => {}), []);
+  React.useEffect(() => { load(); }, [load]);
+  // Check automatically when the Inbox opens (the server skips it if it ran in the last 10 minutes)
+  const auto = React.useRef(false);
+  React.useEffect(() => {
+    if (!cfg || auto.current || !cfg.keySet) return;
+    auto.current = true;
+    ocCall({ action: "sync" }).then(d => { if (d.added) onSynced(); load(); }).catch(() => {});
+  }, [cfg]); // eslint-disable-line
+  async function run(kind) {
+    setBusy(kind); setMsg("");
+    try {
+      if (kind === "test") { const d = await ocCall({ action: "test" }); setTest(d); if (!picked.length && d.suggested && d.suggested.length) setPicked(d.suggested); setMsg(`Connected to ${d.account}. Found ${d.events.length} check-in event${d.events.length === 1 ? "" : "s"} in the last 3 weeks.`); }
+      if (kind === "sync") { const d = await ocCall({ action: "sync", force: true }); setMsg(`${d.checkedIn} checked in from ${d.window}. ${d.added ? `${d.added} new student${d.added === 1 ? "" : "s"} added to your Inbox.` : "No one new."}`); onSynced(); load(); }
+      if (kind === "save") { await ocCall({ action: "save", events: picked }); setMsg("Saved. Tap Check One Church now to pull this week’s check-ins."); load(); }
+      if (kind === "import" || kind === "continue") {
+        let d = kind === "import" ? await ocCall({ action: "import", since }) : await ocCall({ action: "continue" });
+        const total = (d.added || 0) + (d.remaining || 0) + (progress && kind === "continue" ? progress.done : 0);
+        let done = (progress && kind === "continue" ? progress.done : 0) + (d.added || 0);
+        setProgress({ done, total });
+        if (kind === "import") setMsg(`${d.checkedIn} people checked in from ${d.window}. ${d.queued} aren’t on the roster yet. Adding them to your Inbox…`);
+        onSynced();
+        while (d.remaining > 0) {
+          d = await ocCall({ action: "continue" });
+          if (!d.added) break; // Inbox is full; finish later with Continue
+          done += d.added; setProgress({ done, total }); onSynced();
+        }
+        setMsg(d.remaining > 0 ? `${done} added so far. ${d.remaining} still to add. Approve some cards, then tap Continue import.` : `Done. ${done} people added to your Inbox. Use “Link all name matches” for anyone already on your roster.`);
+        setProgress(null); load();
+      }
+    } catch (e) { setMsg(e.message); }
+    setBusy("");
+  }
+  if (!cfg) return null;
+  const ready = cfg.keySet; // with no event picked, the server looks for the event named “IMPACT”
+  const when = t => t ? new Date(t).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never";
+  const toggle = ev => setPicked(p => p.some(x => x.id === ev.id) ? p.filter(x => x.id !== ev.id) : [...p, { id: ev.id, name: ev.name }]);
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${ready ? C.border : C.orange}`, borderRadius:12, padding:"12px 14px", marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+        <Users size={15} color={C.accent} />
+        <span style={{ fontSize:14, fontWeight:700, color:C.cream }}>One Church check-ins</span>
+        <span style={{ fontSize:12, color:C.muted }}>{ready ? `Last checked ${when(cfg.lastSync)}` : "Not set up yet"}</span>
+        <span style={{ marginLeft:"auto", display:"flex", gap:6 }}>
+          {ready && <button onClick={() => run("sync")} disabled={!!busy} style={S.reqAddBtn}>{busy === "sync" ? "Checking…" : "Check One Church now"}</button>}
+          <button onClick={() => setOpen(o => !o)} style={S.cancelBtn}>{open ? "Close" : ready ? "Settings" : "Set up"}</button>
+        </span>
+      </div>
+      {ready && !open && !cfg.importedSince && <div style={{ fontSize:12.5, color:C.cream, lineHeight:1.5 }}>Start with a one-time import: tap <b>Settings</b> and <b>Import since Sep 1</b>.</div>}
+      {ready && !open && <div style={{ fontSize:12, color:C.muted, lineHeight:1.5 }}>New students who check in to {(cfg.events || []).length ? cfg.events.map(e => e.name).join(" or ") : `the “${cfg.eventName || "IMPACT"}” event`} show up below. It looks back 7 days, so people entered on Monday still come through.</div>}
+      {progress && progress.total > 0 && (
+        <div aria-label={`Added ${progress.done} of ${progress.total}`} role="progressbar" aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}>
+          <div style={{ height:6, background:C.faint, borderRadius:3, overflow:"hidden" }}><div style={{ height:"100%", width:`${Math.round(progress.done / progress.total * 100)}%`, background:C.accent, transition:"width 0.3s" }} /></div>
+          <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Adding {progress.done} of {progress.total}…</div>
+        </div>
+      )}
+      {!progress && cfg.queued > 0 && !busy && <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:12.5, color:C.orange }}>{cfg.queued} people from the import are still waiting to be added.<button onClick={() => run("continue")} style={{ ...S.reqAddBtn, marginLeft:"auto" }}>Continue import</button></div>}
+      {msg && <div role="status" style={{ fontSize:12.5, color: /Couldn|didn|isn’t|permission|answered/.test(msg) ? "#e07a5f" : C.accentLight, lineHeight:1.5 }}>{msg}</div>}
+      {open && (
+        <div style={{ display:"flex", flexDirection:"column", gap:10, borderTop:`1px solid ${C.faint}`, paddingTop:10 }}>
+          <div style={{ fontSize:12.5, color:C.cream, lineHeight:1.55 }}>
+            <b>1. API key:</b> {cfg.keySet ? <span style={{ color:C.accentLight }}>saved in Cloudflare ✓</span> : <span style={{ color:C.orange }}>not set. In Cloudflare → your Let’s Pray project → Settings → Variables and Secrets, add a secret named <code>ONE_CHURCH_API_KEY</code> with a read-only One Church key, then redeploy.</span>}
+            <br /><b>2. Church:</b> {cfg.tenant}.onechurchsoftware.com
+            <br /><b>3. Check-in event:</b> {(cfg.events || []).length ? cfg.events.map(e => e.name).join(", ") : `“${cfg.eventName || "IMPACT"}” (found automatically)`}
+            <br /><b>Grade</b> comes from the Grade field on each person’s One Church profile.
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => run("test")} disabled={!!busy || !cfg.keySet} style={{ ...S.reqAddBtn, opacity: cfg.keySet ? 1 : 0.5 }}>{busy === "test" ? "Testing…" : "Test connection + find events"}</button>
+          </div>
+          <div style={{ borderTop:`1px solid ${C.faint}`, paddingTop:10, display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ fontSize:12.5, color:C.cream, lineHeight:1.5 }}><b>First-time import:</b> bring in everyone who checked in to IMPACT since a start date. After that, new check-ins come in each week on their own.{cfg.importedSince ? <span style={{ color:C.accentLight }}> Imported since {new Date(cfg.importedSince + "T12:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })} ✓</span> : null}</div>
+            <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+              <label style={{ fontSize:12.5, color:C.muted }}>Since <input type="date" value={since} max={ymd()} onChange={e => e.target.value && setSince(e.target.value)} style={{ ...S.gradeSelect, colorScheme:"dark", marginLeft:4 }} aria-label="Import check-ins since" /></label>
+              <button onClick={() => run("import")} disabled={!!busy || !cfg.keySet} style={{ ...S.confirmBtn, opacity: cfg.keySet ? 1 : 0.5 }}>{busy === "import" ? "Importing…" : `Import since ${new Date(since + "T12:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })}`}</button>
+            </div>
+          </div>
+          {test && test.events && (
+            <div>
+              <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>Which event do students check in to?</div>
+              <div style={{ maxHeight:220, overflowY:"auto", border:`1px solid ${C.faint}`, borderRadius:8 }}>
+                {test.events.length === 0 && <div style={{ padding:10, fontSize:12.5, color:C.muted }}>No check-in events found in the last 3 weeks.</div>}
+                {test.events.map(ev => (
+                  <label key={ev.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 10px", borderBottom:`1px solid ${C.faint}`, fontSize:13, color:C.cream, cursor:"pointer" }}>
+                    <input type="checkbox" checked={picked.some(x => x.id === ev.id)} onChange={() => toggle(ev)} style={{ accentColor:C.accent }} />{ev.name}
+                  </label>
+                ))}
+              </div>
+              <button onClick={() => run("save")} disabled={!!busy || !picked.length} style={{ ...S.confirmBtn, marginTop:8, opacity: picked.length ? 1 : 0.5 }}>Save event</button>
+              {(test.logFields || test.personFields) && (
+                <details style={{ marginTop:8, fontSize:11.5, color:C.muted }}>
+                  <summary style={{ cursor:"pointer" }}>Technical details (field names only, no personal data)</summary>
+                  <div style={{ marginTop:4, lineHeight:1.5, wordBreak:"break-word" }}>Events: {(test.eventFields || []).join(", ") || "—"}<br />Check-ins: {(test.logFields || []).join(", ") || "—"}<br />People: {(test.personFields || []).join(", ") || "—"}</div>
+                </details>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CheckinCards({ items, people, setPeople, smallGroups, onRemove }) {
+  const [groupsFor, setGroupsFor] = React.useState({});
+  const [linkFor, setLinkFor] = React.useState({});
+  const [typeFor, setTypeFor] = React.useState({});
+  if (!items.length) return null;
+  const roster = people.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name));
+  async function seen(ids) { await fetch("/api/onechurch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "seen", ocIds: ids }) }).catch(() => {}); }
+  async function add(item) {
+    const link = linkFor[item.id] ?? (item.checkin && item.checkin.matchId) ?? "";
+    const groups = groupsFor[item.id] || [];
+    const type = typeFor[item.id] || "student";
+    if (link) {
+      setPeople(prev => prev.map(p => p.id === link ? { ...p, ocId: item.ocId, smallGroupIds: Array.from(new Set([...sgIds(p), ...groups])), grade: p.grade || item.grade || null, birthday: p.birthday || item.birthday || "", updatedAt: Date.now() } : p));
+    } else {
+      setPeople(prev => [...prev, { id: genId(), name: item.name, type, group: type === "student" && item.grade ? (item.grade >= 9 ? "hs" : "ms") : null, grade: type === "student" ? item.grade || null : null, birthday: item.birthday || "", smallGroupIds: groups, ocId: item.ocId, firstVisit: item.checkin ? item.checkin.at : Date.now(), active: true, prayedAt: null, prayerRequests: [], causeCircle: [], updatedAt: Date.now() }]);
+    }
+    await seen([item.ocId]); onRemove([item.id]);
+  }
+  async function dismiss(item) { await seen([item.ocId]); onRemove([item.id]); }
+  const exact = items.filter(it => it.checkin && it.checkin.matchId && people.some(p => p.id === it.checkin.matchId));
+  async function linkAll() {
+    const byPerson = Object.fromEntries(exact.map(it => [it.checkin.matchId, it]));
+    setPeople(prev => prev.map(p => byPerson[p.id] ? { ...p, ocId: byPerson[p.id].ocId, grade: p.grade || byPerson[p.id].grade || null, birthday: p.birthday || byPerson[p.id].birthday || "", updatedAt: Date.now() } : p));
+    await seen(exact.map(it => it.ocId)); onRemove(exact.map(it => it.id));
+  }
+  const chip = on => ({ padding:"5px 10px", borderRadius:14, border:`1px solid ${on ? C.accent : C.border}`, background: on ? C.accentBg : "none", color: on ? C.cream : C.muted, fontSize:12.5, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+        <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:700 }}>New from check-in · {items.length}</div>
+        {exact.length > 1 && <button onClick={linkAll} style={{ ...S.reqAddBtn, marginLeft:"auto" }}>Link all {exact.length} name matches</button>}
+      </div>
+      {exact.length > 1 && <div style={{ fontSize:12, color:C.muted, lineHeight:1.5, marginTop:-4 }}>These {exact.length} have the exact same name as someone already on your roster. Linking keeps one record each (no duplicates) and fills in a missing grade or birthday.</div>}
+      {items.map(item => {
+        const ci = item.checkin || {};
+        const groups = groupsFor[item.id] || [];
+        const link = linkFor[item.id] ?? ci.matchId ?? "";
+        const type = typeFor[item.id] || "student";
+        return (
+          <div key={item.id} style={{ background:C.surface, border:`1px solid ${C.accent}55`, borderLeft:`4px solid ${C.accent}`, borderRadius:12, padding:"12px 14px", display:"flex", flexDirection:"column", gap:9 }}>
+            <div>
+              <div style={{ display:"flex", alignItems:"baseline", gap:8, flexWrap:"wrap" }}>
+                <span style={{ fontSize:15.5, fontWeight:700, color:C.cream }}>{item.name}</span>
+                {item.grade && <span style={{ fontSize:12.5, color:C.muted }}>{ordinal(item.grade)} grade</span>}
+              </div>
+              <div style={{ fontSize:12.5, color:C.muted, marginTop:2 }}>First checked in to {ci.event || "IMPACT"} {ci.at ? new Date(ci.at).toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric" }) : ""}{ci.visits > 1 ? ` · came ${ci.visits} times` : ""}</div>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.muted, marginBottom:5 }}>Already on the roster?</div>
+              <select value={link} onChange={e => setLinkFor(m => ({ ...m, [item.id]: e.target.value }))} style={{ ...S.gradeSelect, width:"100%" }} aria-label={`Match ${item.name} to the roster`}>
+                <option value="">No, add as a new {type}</option>
+                {roster.map(p => <option key={p.id} value={p.id}>Same person as {p.name}</option>)}
+              </select>
+              {ci.matchId && link === ci.matchId && <div style={{ fontSize:11.5, color:C.accentLight, marginTop:4 }}>Same name as someone on your roster, so they’ll be linked, not added twice.</div>}
+            </div>
+            {!link && (
+              <div style={{ display:"flex", gap:6 }}>
+                {[["student", "Student"], ["leader", "Leader"]].map(([v, l]) => <button key={v} onClick={() => setTypeFor(m => ({ ...m, [item.id]: v }))} aria-pressed={type === v} style={chip(type === v)}>{l}</button>)}
+              </div>
+            )}
+            {smallGroups.length > 0 && (
+              <div>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:5 }}>Small groups</div>
+                <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                  {smallGroups.map(g => { const on = groups.includes(g.id); return <button key={g.id} onClick={() => setGroupsFor(m => ({ ...m, [item.id]: on ? groups.filter(x => x !== g.id) : [...groups, g.id] }))} aria-pressed={on} style={chip(on)}>{on ? "✓ " : ""}{g.name}</button>; })}
+                </div>
+              </div>
+            )}
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <button onClick={() => add(item)} style={S.confirmBtn}>{link ? "Link + save" : "Add to roster"}</button>
+              <button onClick={() => dismiss(item)} style={{ background:"none", border:"none", color:C.muted, fontSize:12.5, cursor:"pointer", marginLeft:"auto" }}>Not for the roster</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function InboxView({ items, people, setPeople, onRemove, studentCodeSet, parentCodeSet }) {
   const [match, setMatch] = React.useState({});
   const [edits, setEdits] = React.useState({});
@@ -3824,6 +4024,12 @@ function AppMain({ settings, role, onStatus }) {
     return () => { window.removeEventListener("lp-devo-updated", load); clearInterval(t); };
   }, []);
   const [seriesPane, setSeriesPane] = useState("series");
+  // Weekly One Church check: whoever opens the app first after Sunday night triggers it (the server runs it at most every 6 hours)
+  useEffect(() => {
+    if (role !== "team" && role !== "admin") return;
+    const t = setTimeout(() => fetch("/api/onechurch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync" }) }).catch(() => {}), 4000);
+    return () => clearTimeout(t);
+  }, [role]);
   // Record Roster opens in the admin activity log (once every 10 minutes per phone)
   useEffect(() => {
     if (view !== "roster") return;
@@ -5425,7 +5631,13 @@ function AppMain({ settings, role, onStatus }) {
       )}
 
       {view === "inbox" && adminAuthed && (
-        <InboxView items={submissions} people={people} setPeople={setPeople} onRemove={removeSubmissions} studentCodeSet={!!settings.studentCodeSet} parentCodeSet={!!settings.parentCodeSet} />
+        <div style={{ width:"100%" }}>
+          <div style={{ maxWidth:480, margin:"0 auto", padding:"16px 16px 0", boxSizing:"border-box" }}>
+            <OneChurchPanel onSynced={loadInbox} />
+            <CheckinCards items={submissions.filter(x => x.kind === "checkin")} people={people} setPeople={setPeople} smallGroups={smallGroups} onRemove={removeSubmissions} />
+          </div>
+          <InboxView items={submissions.filter(x => x.kind !== "checkin")} people={people} setPeople={setPeople} onRemove={removeSubmissions} studentCodeSet={!!settings.studentCodeSet} parentCodeSet={!!settings.parentCodeSet} />
+        </div>
       )}
 
       {/* ─── REPORT ─── */}

@@ -57,6 +57,22 @@ This copy has been customized for IMPACT Student Ministry. On top of the origina
 
 Sign-ins are remembered for 90 days (leaders), 24 hours (admin), 180 days (students) and 1 year (parents). Changing the student or parent code signs out everyone using the old one. Revoking a leader's code, or giving them a new one, signs out just that leader right away.
 
+### One Church check-ins → Inbox
+
+New students who check in to the **IMPACT** event in One Church show up at the top of the admin **Inbox** as "New from check-in" cards, with name, grade (from the Grade field on their One Church profile) and birthday (month and day only). On each card, pick their small groups and tap **Add to roster**, or link them to someone already on the roster, or tap **Not for the roster**. Each person is tracked by their One Church ID, so nobody is offered twice.
+
+- **First-time import:** Inbox → One Church check-ins → **Settings → Import since Sep 1** (any start date in the last year). It finds everyone who checked in to IMPACT since then and adds anyone not on the roster to your Inbox in batches, with a progress bar. Each card shows their first visit and how many times they came. **Link all name matches** links everyone whose name exactly matches someone already on your roster in one tap. If the Inbox fills up (300 items), approve some and tap **Continue import**.
+- **Every week after that:** the app checks One Church on its own, looking back 7 days, the first time a leader or admin opens the app (at most every 6 hours), plus whenever you open the Inbox or tap **Check One Church now**. People entered on Monday from paper cards still come through that week. Leaders' apps only start the check; names only ever show in your admin Inbox.
+- New students show in leaders' **Check in this week** as "New at IMPACT! Reach out this week" for their first two weeks.
+- Only name, grade and birthday are brought over. Phone numbers, emails and addresses stay in One Church.
+
+**Setup (one time):**
+1. In One Church: gear icon → **API / Webhooks** → **+ Add New**, name it "Let's Pray", choose **Custom** access with read-only permissions for People, Groups and Events. Copy the key (it's shown once).
+2. In Cloudflare: your Let's Pray Pages project → **Settings → Variables and Secrets** → add a **secret** named `ONE_CHURCH_API_KEY` with that key. Redeploy (or upload the next update) so it takes effect.
+3. In the app: Inbox → One Church check-ins → **Settings → Test connection**. It confirms the key works and finds the "IMPACT" event; the church address `livinghopefindlay.onechurchsoftware.com` is already set. The test also lists the field names One Church sent back (no personal data) in case anything needs adjusting.
+
+Never put the key in GitHub, a chat or an email. If it's ever exposed, delete it in One Church and make a new one.
+
 ### Leader codes, names and the activity log (admin → Access)
 
 - **Add a leader** by first and last name and the app makes a unique 10-character code (like `K7M4Q-9TPXR`). It's shown once so you can copy it or text it to them. Only a scrambled (hashed) version is stored, so nobody, including you, can look it up later; if a leader loses theirs, tap **New code**.
