@@ -37,7 +37,10 @@ export async function onRequest(context) {
   try { body = await request.json(); } catch (_e) { return json({ error: "Invalid JSON" }, 400); }
 
   try {
-    if (body.action === "test") return json(await testConnection(env, cfg));
+    if (body.action === "test") {
+      try { return json({ ...(await testConnection(env, cfg)), tested: true }); }
+      catch (e) { return json({ ok: false, tested: true, error: e.message, steps: e.steps || [] }); }
+    }
     if (body.action === "save") {
       const events = (Array.isArray(body.events) ? body.events : []).slice(0, 6)
         .map(e => ({ id: String(e.id || "").replace(/[^0-9]/g, "").slice(0, 12), name: String(e.name || "").slice(0, 120) }))

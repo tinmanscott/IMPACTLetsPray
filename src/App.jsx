@@ -3230,6 +3230,7 @@ function matchName(item) {
 async function ocCall(body) {
   const r = await fetch("/api/onechurch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
+  if (d.tested) return d; // the Test screen shows each step, pass or fail
   if (!r.ok || d.ok === false) throw new Error(d.error || "Couldn’t reach One Church.");
   return d;
 }
@@ -3256,7 +3257,11 @@ function OneChurchPanel({ onSynced }) {
   async function run(kind) {
     setBusy(kind); setMsg("");
     try {
-      if (kind === "test") { const d = await ocCall({ action: "test" }); setTest(d); if (!picked.length && d.suggested && d.suggested.length) setPicked(d.suggested); setMsg(`Connected to ${d.account}. Found ${d.events.length} check-in event${d.events.length === 1 ? "" : "s"} in the last 3 weeks.`); }
+      if (kind === "test") {
+        const d = await ocCall({ action: "test" }); setTest(d);
+        if (!picked.length && d.suggested && d.suggested.length) setPicked(d.suggested);
+        setMsg(d.ok ? `Connected. Found ${(d.events || []).length} check-in event${(d.events || []).length === 1 ? "" : "s"} in the last 3 weeks.` : (d.error || "Some steps didn’t work. See below."));
+      }
       if (kind === "sync") { const d = await ocCall({ action: "sync", force: true }); setMsg(`${d.checkedIn} checked in from ${d.window}. ${d.added ? `${d.added} new student${d.added === 1 ? "" : "s"} added to your Inbox.` : "No one new."}`); onSynced(); load(); }
       if (kind === "save") { await ocCall({ action: "save", events: picked }); setMsg("Saved. Tap Check One Church now to pull this week’s check-ins."); load(); }
       if (kind === "import" || kind === "continue") {
@@ -3320,6 +3325,22 @@ function OneChurchPanel({ onSynced }) {
               <button onClick={() => run("import")} disabled={!!busy || !cfg.keySet} style={{ ...S.confirmBtn, opacity: cfg.keySet ? 1 : 0.5 }}>{busy === "import" ? "Importing…" : `Import since ${new Date(since + "T12:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })}`}</button>
             </div>
           </div>
+          {test && test.steps && test.steps.length > 0 && (
+            <div style={{ border:`1px solid ${C.faint}`, borderRadius:8, padding:"8px 10px", display:"flex", flexDirection:"column", gap:6 }}>
+              {test.steps.map((st, i) => (
+                <div key={i} style={{ fontSize:12.5, lineHeight:1.45 }}>
+                  <span style={{ color: st.ok ? C.accentLight : st.label === "Church account" ? C.muted : "#e07a5f", fontWeight:700 }}>{st.ok ? "✓" : st.label === "Church account" ? "–" : "✗"} {st.label}</span>
+                  {!st.ok && st.label === "Church account" && <span style={{ color:C.muted }}> · not needed (keys often can’t read this)</span>}
+                  {!st.ok && st.label !== "Church account" && (
+                    <div style={{ color:C.muted, marginTop:2 }}>
+                      {st.status ? `One Church answered ${st.status}. ` : ""}Needs: <b style={{ color:C.cream }}>{st.need}</b>
+                      {st.said && <div style={{ fontFamily:"ui-monospace, Menlo, Consolas, monospace", fontSize:11.5, color:"#a9acb1", marginTop:2, wordBreak:"break-word" }}>“{st.said}”</div>}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {test && test.events && (
             <div>
               <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:700, marginBottom:6 }}>Which event do students check in to?</div>
