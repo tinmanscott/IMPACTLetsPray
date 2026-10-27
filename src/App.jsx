@@ -2505,6 +2505,7 @@ function friendlyBrowser(ua) {
   const br = /EdgA?\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /CriOS|Chrome\//.test(ua) ? "Chrome" : /FxiOS|Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
   return dev ? `${br} on ${dev}` : br;
 }
+const ocDiag = d => d && d.diag ? ` (Looked at ${d.diag.events} IMPACT event${d.diag.events === 1 ? "" : "s"}: ${d.diag.logs} check-in log${d.diag.logs === 1 ? "" : "s"}${d.diag.attendance ? `, ${d.diag.attendance} attendance records` : ""}${d.diag.fallback ? `, ${d.diag.fallback} from the all-check-ins search` : ""}.)` : "";
 const ROLE_LABEL = { admin: "Admin", team: "Leader", student: "Student", parent: "Parent", "": "—" };
 
 function LeaderCodes() {
@@ -3262,21 +3263,22 @@ function OneChurchPanel({ onSynced }) {
         if (!picked.length && d.suggested && d.suggested.length) setPicked(d.suggested);
         setMsg(d.ok ? `Connected. Found ${(d.events || []).length} check-in event${(d.events || []).length === 1 ? "" : "s"} in the last 3 weeks.` : (d.error || "Some steps didn’t work. See below."));
       }
-      if (kind === "sync") { const d = await ocCall({ action: "sync", force: true }); setMsg(`${d.checkedIn} checked in from ${d.window}. ${d.added ? `${d.added} new student${d.added === 1 ? "" : "s"} added to your Inbox.` : "No one new."}`); onSynced(); load(); }
+      if (kind === "sync") { const d = await ocCall({ action: "sync", force: true }); setMsg(`${d.checkedIn} checked in from ${d.window}. ${d.added ? `${d.added} new student${d.added === 1 ? "" : "s"} added to your Inbox.` : d.remaining ? "" : "No one new."}${d.remaining ? ` ${d.remaining} more to add. Tap Continue import.` : ""}${ocDiag(d)}`); onSynced(); load(); }
       if (kind === "save") { await ocCall({ action: "save", events: picked }); setMsg("Saved. Tap Check One Church now to pull this week’s check-ins."); load(); }
       if (kind === "import" || kind === "continue") {
         let d = kind === "import" ? await ocCall({ action: "import", since }) : await ocCall({ action: "continue" });
         const total = (d.added || 0) + (d.remaining || 0) + (progress && kind === "continue" ? progress.done : 0);
         let done = (progress && kind === "continue" ? progress.done : 0) + (d.added || 0);
         setProgress({ done, total });
-        if (kind === "import") setMsg(`${d.checkedIn} people checked in from ${d.window}. ${d.queued} aren’t on the roster yet. Adding them to your Inbox…`);
+        if (kind === "import") setMsg(`${d.checkedIn} people came from ${d.window}. ${d.queued} aren’t linked to the roster yet. Adding them to your Inbox…${ocDiag(d)}`);
+        const diagNote = ocDiag(d);
         onSynced();
         while (d.remaining > 0) {
           d = await ocCall({ action: "continue" });
           if (!d.added) break; // Inbox is full; finish later with Continue
           done += d.added; setProgress({ done, total }); onSynced();
         }
-        setMsg(d.remaining > 0 ? `${done} added so far. ${d.remaining} still to add. Approve some cards, then tap Continue import.` : `Done. ${done} people added to your Inbox. Use “Link all name matches” for anyone already on your roster.`);
+        setMsg(d.remaining > 0 ? `${done} added so far. ${d.remaining} still to add. Approve some cards, then tap Continue import.` : `Done. ${done} people added to your Inbox. Use “Link all name matches” for anyone already on your roster.${kind === "import" ? diagNote : ""}`);
         setProgress(null); load();
       }
     } catch (e) { setMsg(e.message); }
