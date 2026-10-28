@@ -4,11 +4,12 @@
 //   Anyone signed in (students with the student code, parents, leaders). Names come back as first name + last initial.
 //
 // Be There keeps its events in Firebase (project impact-students-events, collection "events"), readable without
-// signing in. Its web key is public (every visitor's browser gets it), so it's fine here. Results are cached 5 minutes.
+// signing in. Its Firebase web key is kept out of the code: set it in Cloudflare as BE_THERE_FIREBASE_KEY
+// (Settings → Variables and Secrets). Results are cached 5 minutes.
 import { json, shortName } from "../../lib/auth.js";
+import { loadEvents } from "../../lib/bethere.js";
 
 const PROJECT = "impact-students-events";
-const PUBLIC_WEB_KEY = "AIzaSyA46PUgkaianFMuPmPundeJO6yFJhCDbvk";
 const CACHE_MS = 5 * 60 * 1000;
 
 const ymdET = d => new Date(d).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
@@ -36,10 +37,22 @@ export async function onRequest(context) {
   } catch (_e) {}
 
   const today = ymdET(Date.now());
-  const key = env.BE_THERE_FIREBASE_KEY || PUBLIC_WEB_KEY;
+  // Be There now stores its events alongside Let's Pray; Firebase is only read until the one-time import is done
+  const stored = await loadEvents(kv);
+  if (stored.length) {
+    const events = stored.filter(e => e.dateStr >= today).map(e => ({
+      id: e.id, students: shortNames(e.student).slice(0, 200), eventName: e.eventName, dateStr: e.dateStr, time: e.time || "",
+      location: e.location || "", link: safeLink(e.link), notes: String(e.notes || "").slice(0, 400), level: e.level || "",
+      highlight: e.adminHighlight === true, cheers: Math.max(0, Number(e.cheers) || 0),
+    }));
+    return json({ events, updated: Date.now() });
+  }
+  const key = env.BE_THERE_FIREBASE_KEY;
+  if (!key) return json({ error: "Be There isn’t connected yet. Add BE_THERE_FIREBASE_KEY in Cloudflare.", events: [] }, 200);
   const res = await fetch(`https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents:runQuery?key=${encodeURIComponent(key)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    // The Referer lets the key stay restricted to Be There's own website in Google Cloud
+    headers: { "Content-Type": "application/json", "Referer": "https://impactbethere.app/" },
     body: JSON.stringify({ structuredQuery: {
       from: [{ collectionId: "events" }],
       where: { fieldFilter: { field: { fieldPath: "dateStr" }, op: "GREATER_THAN_OR_EQUAL", value: { stringValue: today } } },

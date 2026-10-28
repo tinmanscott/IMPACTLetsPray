@@ -2736,6 +2736,39 @@ function AuditLog() {
   );
 }
 
+/* ── Be There (admin → Access) ── */
+function BeThereAdmin() {
+  const [count, setCount] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+  const load = React.useCallback(() => {
+    fetch("/api/bt?what=events", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(d => { if (Array.isArray(d)) setCount(d.length); }).catch(() => {});
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const runImport = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await fetch("/api/bt", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"import" }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "The import didn’t work.");
+      setMsg(`Found ${d.found} event${d.found === 1 ? "" : "s"} in the old Firebase board. Added ${d.added} new. (Events already copied are skipped, so it’s safe to run again.)`);
+      load();
+    } catch (e) { setMsg(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div style={{ ...S.reportBox, display:"flex", flexDirection:"column", gap:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+        <CalendarDays size={15} color={C.accent} /><p style={{ ...S.reportTitle, margin:0 }}>Be There board</p>
+        <span style={{ marginLeft:"auto", fontSize:12.5, color:C.muted }}>{count === null ? "…" : `${count} event${count === 1 ? "" : "s"} stored`}</span>
+      </div>
+      <p style={{ margin:0, fontSize:12, color:C.muted, lineHeight:1.5 }}>Be There now keeps its events here, behind the same student, parent and leader codes. Open it at <a href="/bethere/" target="_blank" rel="noopener" style={{ color:C.accent }}>/bethere</a> (or impactbethere.app once that address is moved). To bring over the events from the old Firebase version, tap the button below. Do this before you lock Firebase.</p>
+      <button onClick={runImport} disabled={busy} style={{ ...S.cancelBtn, alignSelf:"flex-start" }}>{busy ? "Copying…" : "Copy events from old Firebase board"}</button>
+      {msg && <p style={{ margin:0, fontSize:12.5, color:C.cream, lineHeight:1.5 }}>{msg}</p>}
+    </div>
+  );
+}
+
 /* ── Monthly recap (admin → Report) ── */
 function MonthlyRecap({ people, weekHistory, ministryName, series }) {
   const months = React.useMemo(() => {
@@ -5754,6 +5787,7 @@ function AppMain({ settings, role, onStatus }) {
       {view === "access" && adminAuthed && (
         <div style={{ ...S.importWrap, gap:16 }}>
           <LeaderCodes />
+          <BeThereAdmin />
           <AuditLog />
         </div>
       )}

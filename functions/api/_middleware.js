@@ -22,6 +22,7 @@ function requiredRole(path, url, method) {
   if (path === "/api/onechurch") return method === "POST" ? "team" : "admin"; // One Church sync: leaders' apps can trigger the weekly check (checked again in onechurch.js)
   if (path === "/api/audit") return method === "GET" ? "admin" : "team"; // admin reads the log; leaders' Roster opens are recorded
   if (path === "/api/devos") return method === "GET" ? "team" : "public"; // anyone can check off a devo; only leaders see the counts
+  if (path === "/api/bt") return "submit"; // the Be There page: anyone signed in with a code (admin-only actions checked in bt.js)
   if (path === "/api/bethere") return "submit"; // Be There events: students (with the code), parents, leaders
   if (path === "/api/calendar") return method === "GET" && !url.searchParams.get("action") ? "submit" : "admin"; // BAND calendar: everyone sees it; admin sets it up
   if (path === "/api/art") return method === "GET" ? "public" : "admin"; // series artwork
