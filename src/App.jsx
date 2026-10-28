@@ -832,6 +832,97 @@ function BeThereCard({ maxWidth = 400, who = "student" }) {
   );
 }
 
+/* Upcoming events posted in Be There (read-only) */
+function useBeThere(dep, on = true) {
+  const [data, setData] = React.useState(null);
+  React.useEffect(() => {
+    if (!on) return;
+    let alive = true;
+    const load = () => fetch("/api/bethere", { cache: "no-store" }).then(r => r.ok ? r.json() : { error: "locked", events: [] }).then(d => { if (alive) setData(d); }).catch(() => alive && setData({ error: "Couldn’t reach Be There right now.", events: [] }));
+    load();
+    const t = setInterval(load, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(t); };
+  }, [dep, on]);
+  return data;
+}
+const fmtTime12 = t => { if (!t) return ""; const [h, m] = t.split(":").map(Number); return `${((h + 11) % 12) + 1}${m ? ":" + String(m).padStart(2, "0") : ""} ${h < 12 ? "AM" : "PM"}`; };
+
+function BeThereList({ data, who = "student", maxWidth = 400 }) {
+  const [level, setLevel] = React.useState("all");
+  const [msg, setMsg] = React.useState("");
+  const [range, setRange] = React.useState(14);
+  if (!data) return <p style={{ color:"#80848a", fontSize:14 }}>Loading Be There…</p>;
+  const today = ymd();
+  const until = ymd(new Date(Date.now() + range * 864e5));
+  const all = (data.events || []).filter(e => e.dateStr >= today && (level === "all" || e.level === level));
+  const list = all.filter(e => e.dateStr <= until);
+  const later = all.length - list.length;
+  const days = [];
+  for (const e of list) { const last = days[days.length - 1]; if (last && last.day === e.dateStr) last.items.push(e); else days.push({ day: e.dateStr, items: [e] }); }
+  async function share(e) {
+    const bits = [e.students, e.eventName, `${calDayLabel(e.dateStr)}${e.time ? ` at ${fmtTime12(e.time)}` : ""}`, e.location].filter(Boolean);
+    const text = `${bits.join(" — ")}\nCome cheer them on! ${BE_THERE_URL}`;
+    try {
+      if (navigator.share) await navigator.share({ title: e.eventName, text, url: BE_THERE_URL });
+      else { await navigator.clipboard.writeText(text); setMsg("Copied. Paste it in a text or group chat."); setTimeout(() => setMsg(""), 3000); }
+    } catch (_e) { /* closed the share sheet */ }
+  }
+  const chip = on => ({ padding:"5px 12px", borderRadius:14, border:`1px solid ${on ? "#e95e24" : "#34363a"}`, background: on ? "#2c1a12" : "none", color: on ? "#f2f1ee" : "#80848a", fontSize:12.5, fontWeight:600, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  const intro = who === "leader" ? "Games, concerts and performances students and parents posted. Pick one and go be there." : who === "parent" ? "What IMPACT students have coming up. Your student can post theirs too." : "What your friends have coming up. Go cheer them on!";
+  return (
+    <div style={{ width:"100%", maxWidth, boxSizing:"border-box", textAlign:"left" }}>
+      <BeThereCard who={who} maxWidth={maxWidth} />
+      <div style={{ background:"#1f2023", border:"1px solid #34363a", borderRadius:14, padding:"14px 16px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+          <span style={{ fontSize:14, fontWeight:700, color:"#f2f1ee", fontFamily:"'Montserrat', system-ui, sans-serif" }}>Coming up on Be There</span>
+          <select value={range} onChange={e => setRange(Number(e.target.value))} aria-label="How far ahead" style={{ marginLeft:"auto", background:"#161719", color:"#f2f1ee", border:"1px solid #34363a", borderRadius:8, padding:"5px 8px", fontSize:12.5, fontFamily:"'Inter', system-ui, sans-serif" }}>
+            {CAL_RANGES.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
+          </select>
+        </div>
+        <p style={{ margin:"0 0 10px", fontSize:12.5, color:"#a9acb1", lineHeight:1.5 }}>{intro}</p>
+        <div role="group" aria-label="Middle or high school" style={{ display:"flex", gap:6, marginBottom:12 }}>
+          {[["all", "All"], ["ms", "MS"], ["hs", "HS"]].map(([v, l]) => <button key={v} onClick={() => setLevel(v)} aria-pressed={level === v} style={chip(level === v)}>{l}</button>)}
+        </div>
+        {data.error && !(data.events || []).length && <p style={{ margin:0, fontSize:13, color:"#80848a" }}>{data.error === "locked" ? "Sign in to see Be There events." : data.error}</p>}
+        {!data.error && days.length === 0 && <p style={{ margin:"0 0 6px", fontSize:13, color:"#80848a" }}>Nothing posted for the {CAL_RANGES.find(r => r[0] === range)[1].toLowerCase()}. Post yours on Be There!</p>}
+        {days.map(({ day, items }) => (
+          <div key={day} style={{ marginBottom:10 }}>
+            <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color: day === today ? "#74c464" : "#80848a", marginBottom:4 }}>{calDayLabel(day)}</div>
+            {items.map(e => (
+              <div key={e.id} style={{ borderLeft:`4px solid ${e.highlight ? "#e6b34a" : "#e95e24"}`, padding:"6px 0 6px 10px", marginBottom:6 }}>
+                <div style={{ fontSize:14, fontWeight:700, color:"#f2f1ee", lineHeight:1.3 }}>
+                  {e.highlight && <span aria-label="Highlighted by leaders" style={{ marginRight:4 }}>⭐</span>}{e.students || "IMPACT student"}
+                  {e.level && <span style={{ marginLeft:6, fontSize:10, fontWeight:700, color:"#a9acb1", border:"1px solid #34363a", borderRadius:6, padding:"1px 5px", verticalAlign:"middle" }}>{e.level.toUpperCase()}</span>}
+                </div>
+                <div style={{ fontSize:13.5, color:"#d9d7d2", marginTop:1 }}>{e.eventName}</div>
+                <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>{[fmtTime12(e.time), e.location].filter(Boolean).join(" · ")}{e.cheers ? ` · 📣 ${e.cheers}` : ""}</div>
+                {e.notes && <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:3, whiteSpace:"pre-wrap" }}>{linkify(e.notes)}</div>}
+                <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}>
+                  <button onClick={() => share(e)} style={{ background:"#e95e24", color:"#fff", border:"none", borderRadius:8, padding:"6px 12px", fontSize:12.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>Share</button>
+                  {e.link && <a href={e.link} target="_blank" rel="noopener noreferrer" style={{ border:"1px solid #34363a", color:"#f2f1ee", borderRadius:8, padding:"5px 11px", fontSize:12.5, fontWeight:600, textDecoration:"none" }}>Event link ↗</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+        {later > 0 && range < 120 && <button onClick={() => setRange(CAL_RANGES.find(r => r[0] > range)[0])} style={{ background:"none", border:"none", color:"#f08a5d", fontSize:13, fontWeight:600, cursor:"pointer", padding:0, fontFamily:"'Inter', system-ui, sans-serif" }}>{later} more further out →</button>}
+        {msg && <div role="status" style={{ fontSize:12.5, color:"#74c464", marginTop:6 }}>{msg}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Calendar tab: IMPACT calendar or Be There (students and parents) */
+function CalendarSwitch({ view, setView, maxWidth = 400 }) {
+  const btn = on => ({ flex:1, padding:"8px 0", borderRadius:8, border:"none", background: on ? "#2a2c30" : "none", color: on ? "#f2f1ee" : "#80848a", fontWeight: on ? 700 : 500, fontSize:13, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" });
+  return (
+    <div role="tablist" aria-label="Calendar view" style={{ display:"flex", width:"100%", maxWidth, boxSizing:"border-box", gap:4, padding:3, border:"1px solid #34363a", borderRadius:10, marginBottom:14 }}>
+      <button role="tab" aria-selected={view === "impact"} onClick={() => setView("impact")} style={btn(view === "impact")}>IMPACT calendar</button>
+      <button role="tab" aria-selected={view === "bethere"} onClick={() => setView("bethere")} style={btn(view === "bethere")}>Be There</button>
+    </div>
+  );
+}
+
 /* Home page for anyone not signed in as a leader */
 function HomeChooser({ status }) {
   const tile = (path, title, sub, color) => (
@@ -1138,6 +1229,8 @@ export function StudentPage() {
   const [done, setDone] = React.useState(false);
   const [tab, setTab] = useHashTab(["share", "lesson", "devos", "calendar", "wall"], "share");
   const [hp, setHp] = React.useState(""); // hidden field; only bots fill it in
+  const [calView, setCalView] = React.useState("impact");
+  const beThere = useBeThere(info && info.role, tab === "calendar" && calView === "bethere" && !!(info && info.role));
   const [share, setShare] = React.useState(false);
   const [anonymous, setAnonymous] = React.useState(false);
   const [sharedLast, setSharedLast] = React.useState(false);
@@ -1238,13 +1331,17 @@ export function StudentPage() {
 
   if (tab === "calendar") return page(unlocked ? (
     <>
-      <BeThereCard who="student" />
-      <EventCards events={events} mode="student" />
-      {calendar && calendar.configured
-        ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet. Check back soon!" />
-        : null}
+      <CalendarSwitch view={calView} setView={setCalView} />
+      {calView === "bethere" ? <BeThereList data={beThere} who="student" /> : (
+        <>
+          <EventCards events={events} mode="student" />
+          {calendar && calendar.configured
+            ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet. Check back soon!" />
+            : <p style={{ color:"#80848a", fontSize:14, textAlign:"center", padding:"20px 0" }}>The calendar is coming soon.</p>}
+        </>
+      )}
     </>
-  ) : <><BeThereCard who="student" /><CodeUnlock what="calendar" codeSet={info.studentCodeSet} onUnlocked={load} /></>);
+  ) : <><BeThereCard who="student" /><CodeUnlock what="calendar and Be There events" codeSet={info.studentCodeSet} onUnlocked={load} /></>);
 
   if (tab === "wall") return page(unlocked ? <PrayerWall /> : <CodeUnlock what="Prayer Wall" codeSet={info.studentCodeSet} onUnlocked={load} />);
 
@@ -3074,6 +3171,8 @@ export function ParentPage() {
   const [contact, setContact] = React.useState("");
   const [done, setDone] = React.useState(false);
   const [tab, setTab] = useHashTab(["lesson", "devos", "share", "calendar", "wall"], "lesson");
+  const [calView, setCalView] = React.useState("impact");
+  const beThere = useBeThere(info && info.role, tab === "calendar" && calView === "bethere");
 
   const load = React.useCallback(() => {
     fetch("/api/submit", { cache: "no-store" }).then(r => r.json()).then(setInfo).catch(() => setInfo({ error: true }));
@@ -3162,9 +3261,11 @@ export function ParentPage() {
   if (tab === "devos") return page(<DevosView series={series} mode="parent" />);
   if (tab === "calendar") return page(
     <>
-      <BeThereCard who="parent" />
-      <EventCards events={events} mode="parent" />
-      {calendar && calendar.configured ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet." /> : null}
+      <CalendarSwitch view={calView} setView={setCalView} />
+      {calView === "bethere" ? <BeThereList data={beThere} who="parent" /> : <>
+        <EventCards events={events} mode="parent" />
+        {calendar && calendar.configured ? <CalendarList cal={calendar} title="Calendar" emptyText="Nothing on the calendar yet." /> : null}
+      </>}
     </>
   );
   if (tab === "wall") return page(
@@ -4063,6 +4164,8 @@ function AppMain({ settings, role, onStatus }) {
   }, [view]);
   const [events] = useEvents();
   const calendar = useCalendar(role);
+  const [leaderCalView, setLeaderCalView] = useState("impact");
+  const beThereData = useBeThere(role, view === "calendar" && leaderCalView === "bethere");
   function prayThroughEvent(id) { setFilter(`ev:${id}`); setCardIdx(0); window.scrollTo(0, 0); }
 
   // Prayer walls for leaders: student posts from the server, family requests from the roster
@@ -5190,11 +5293,13 @@ function AppMain({ settings, role, onStatus }) {
 
       {view === "calendar" && (
         <div style={S.importWrap}>
-          <BeThereCard who="leader" maxWidth="none" />
+          <CalendarSwitch view={leaderCalView} setView={setLeaderCalView} maxWidth="none" />
+          {leaderCalView === "bethere" ? <BeThereList data={beThereData} who="leader" maxWidth="none" /> : <>
           <EventCards events={events} mode="leader" onPrayThrough={prayThroughEvent} />
-          {calendar && calendar.configured && <>
+          {calendar && calendar.configured ? <>
             <CalendarList cal={calendar} title="Calendar" maxWidth="none" emptyText="Nothing coming up on the BAND calendar." />
             <p style={{ fontSize:12, color:C.muted, lineHeight:1.5, margin:"0 2px" }}>Events come from BAND and update about every 30 minutes. Tap an event for details.</p>
+          </> : <p style={{ color:C.muted, fontSize:14, textAlign:"center", padding:"20px 0" }}>The calendar is coming soon.</p>}
           </>}
         </div>
       )}
