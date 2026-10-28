@@ -2827,7 +2827,8 @@ function WebsiteEditor() {
     if (!file || !slot) return;
     setBusySlot(slot); setMsg("");
     try {
-      const blob = await resizeImage(file, slot === "logo" ? 400 : 1400, slot === "logo");
+      const square = slot === "logo" || slot.startsWith("staff-");
+      const blob = await resizeImage(file, square ? 600 : 1400, square);
       const form = new FormData(); form.append("photo", blob, "photo.jpg");
       const r = await fetch(`/api/welcome?photo=${slot}`, { method:"POST", body: form });
       const d = await r.json();
@@ -2924,6 +2925,49 @@ function WebsiteEditor() {
           </div>
         </>
       ), "Upcoming events from these calendars show on the website automatically, with Register buttons for sign-up links. Calendars marked leaders only never show.")}
+      {box("Meet the team", (
+        <>
+          {(c.staff || []).map((p, i) => {
+            const setP = (k, v) => set("staff", c.staff.map((x, j) => j === i ? { ...x, [k]: v } : (k === "primary" && v ? { ...x, primary: false } : x)));
+            const move = d => { const a = c.staff.slice(); const [x] = a.splice(i, 1); a.splice(i + d, 0, x); set("staff", a); };
+            const src = photoSrc(`staff-${p.id}`);
+            return (
+              <div key={p.id} style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:10, padding:10, display:"flex", flexDirection:"column", gap:8 }}>
+                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                  <div style={{ width:64, height:64, borderRadius:10, overflow:"hidden", background:C.faint, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    {src ? <img src={src} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <Camera size={18} color={C.muted} />}
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                    <button onClick={() => { slotRef.current = `staff-${p.id}`; fileRef.current && fileRef.current.click(); }} disabled={!!busySlot} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12 }}>{busySlot === `staff-${p.id}` ? "Uploading…" : src ? "Change photo" : "Add photo"}</button>
+                    {src && <button onClick={() => removePhoto(`staff-${p.id}`)} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer", textAlign:"left", padding:0 }}>Remove photo</button>}
+                  </div>
+                  <div style={{ marginLeft:"auto", display:"flex", gap:4 }}>
+                    <button onClick={() => move(-1)} disabled={i === 0} aria-label="Move up" style={{ ...S.cancelBtn, padding:"4px 9px", opacity: i === 0 ? 0.4 : 1 }}>↑</button>
+                    <button onClick={() => move(1)} disabled={i === c.staff.length - 1} aria-label="Move down" style={{ ...S.cancelBtn, padding:"4px 9px", opacity: i === c.staff.length - 1 ? 0.4 : 1 }}>↓</button>
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  <div><label style={lbl}>Name</label><input value={p.name} onChange={e => setP("name", e.target.value)} placeholder="First and last name" style={field} /></div>
+                  <div><label style={lbl}>Role</label><input value={p.role} onChange={e => setP("role", e.target.value)} placeholder="e.g. Student Pastor" style={field} /></div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  <div><label style={lbl}>Email {<span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>(optional)</span>}</label><input type="email" value={p.email} onChange={e => setP("email", e.target.value)} placeholder="name@livinghopefindlay.com" style={field} /></div>
+                  <div><label style={lbl}>Group</label><select value={p.group} onChange={e => setP("group", e.target.value)} style={{ ...field, cursor:"pointer" }}><option value="staff">Staff</option><option value="leader">Leaders</option></select></div>
+                </div>
+                <div><label style={lbl}>A line about them {<span style={{ textTransform:"none", letterSpacing:0, fontWeight:400 }}>(optional)</span>}</label><textarea value={p.bio} onChange={e => setP("bio", e.target.value)} rows={2} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <label style={{ display:"flex", gap:7, alignItems:"center", fontSize:13, color: p.email ? C.cream : C.muted, cursor: p.email ? "pointer" : "default" }}>
+                    <input type="radio" name="welcome-main-contact" checked={!!p.primary} disabled={!p.email} onChange={() => setP("primary", true)} /> Main contact for “Contact us” buttons
+                  </label>
+                  <button onClick={() => set("staff", c.staff.filter((_, j) => j !== i))} style={{ marginLeft:"auto", background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Remove</button>
+                </div>
+              </div>
+            );
+          })}
+          <button onClick={() => set("staff", [...(c.staff || []), { id: Array.from(crypto.getRandomValues(new Uint8Array(8)), b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join(""), name:"", role:"", group:"staff", email:"", bio:"", primary: !(c.staff || []).length }])} style={{ ...S.cancelBtn, alignSelf:"flex-start" }}>Add a person</button>
+        </>
+      ), "Shows on the website with a photo, role and an Email button. Only add people who are OK being on a public page; email is optional. Square photos look best (600×600 or larger, face centered); any photo works. The “Contact us” buttons on the website email the main contact. Click Save website after adding or changing people.")}
+
       {box("Contact & social", (
         <>
           {inp("church", "Church")}{inp("address", "Address")}

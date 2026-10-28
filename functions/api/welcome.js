@@ -4,12 +4,12 @@
 // GET    /api/welcome?photo=<slot>   → the JPEG for that photo slot  (anyone)
 // POST   /api/welcome  JSON content  → save the text and links       (admin)
 // POST   /api/welcome { action: "importCanva" } → one-time copy of the photos from the old Canva site (admin)
-// POST   /api/welcome?photo=<slot>  (form: photo) → replace a photo  (admin)
+// POST   /api/welcome?photo=<slot>  (form: photo) → replace a photo  (admin; slots include staff-<id> for team photos)
 // DELETE /api/welcome?photo=<slot>   → remove a photo                (admin)
 // Access is checked in _middleware.js. Events come from the BAND calendars picked for the website
 // (by default, the one with "event" in its name). Only public-facing fields are sent.
 import { json } from "../../lib/auth.js";
-import { loadContent, cleanContent, PHOTO_SLOTS } from "../../lib/welcome.js";
+import { loadContent, cleanContent, PHOTO_SLOTS, STAFF_SLOT } from "../../lib/welcome.js";
 import { loadCalendars, feedEvents } from "../../lib/calendar.js";
 
 const MAX_BYTES = 1024 * 1024;
@@ -30,7 +30,7 @@ export async function onRequest(context) {
   const kv = env.INTERCEDE_KV;
   const url = new URL(request.url);
   const slot = url.searchParams.get("photo");
-  if (slot !== null && !PHOTO_SLOTS.includes(slot)) return json({ error: "Unknown photo" }, 400);
+  if (slot !== null && !PHOTO_SLOTS.includes(slot) && !STAFF_SLOT.test(slot)) return json({ error: "Unknown photo" }, 400);
 
   if (request.method === "GET") {
     if (slot) {
@@ -113,6 +113,11 @@ export async function onRequest(context) {
     }
     const prev = await loadContent(kv);
     const content = cleanContent(body || {}, prev);
+    // Remove photos of people taken off the team
+    const keep = new Set(content.staff.map(x => `staff-${x.id}`));
+    for (const k of Object.keys(content.photos)) {
+      if (k.startsWith("staff-") && !keep.has(k)) { await kv.delete(`welcome:photo:${k}`); delete content.photos[k]; }
+    }
     await kv.put("welcome:content", JSON.stringify(content));
     return json({ ok: true, content });
   }
