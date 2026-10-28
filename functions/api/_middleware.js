@@ -25,6 +25,7 @@ function requiredRole(path, url, method) {
   if (path === "/api/bt") return "submit"; // the Be There page: anyone signed in with a code (admin-only actions checked in bt.js)
   if (path === "/api/bethere") return "submit"; // Be There events: students (with the code), parents, leaders
   if (path === "/api/calendar") return method === "GET" && !url.searchParams.get("action") ? "submit" : "admin"; // BAND calendar: everyone sees it; admin sets it up
+  if (path === "/api/welcome") return method === "GET" ? "public" : "admin"; // public welcome page (livinghopestudents.com); admin edits it
   if (path === "/api/art") return method === "GET" ? "public" : "admin"; // series artwork
   if (path === "/api/photo") return method === "DELETE" ? "admin" : "team"; // leaders can add/change photos; only admins remove
   if (path === "/api/submit") return "public"; // students share without a code; parent requests need the parent code (checked in submit.js)

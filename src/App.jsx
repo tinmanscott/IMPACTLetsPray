@@ -2769,6 +2769,177 @@ function BeThereAdmin() {
   );
 }
 
+/* ── Public welcome page editor (admin → Website) ── */
+const WELCOME_PHOTOS = [
+  ["logo", "Round logo", "Footer. Square, 400×400 or larger"],
+  ["hero1", "Photo grid 1", "Top of the page. Landscape, about 1600×1200"],
+  ["hero2", "Photo grid 2", "Top of the page. Landscape, about 1600×1200"],
+  ["hero3", "Photo grid 3", "Top of the page. Landscape, about 1600×1200"],
+  ["hero4", "Photo grid 4", "Top of the page. Landscape, about 1600×1200"],
+  ["students", "Students", "Students button and “You Belong Here.” Landscape, about 1600×1200"],
+  ["parents", "Parents", "Parents button and the Parent Hub. Landscape, about 1600×1200"],
+  ["events", "Events", "Events button. Landscape, about 1600×1200"],
+];
+function WebsiteEditor() {
+  const [c, setC] = React.useState(null);
+  const [feeds, setFeeds] = React.useState([]);
+  const [dirty, setDirty] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+  const [busySlot, setBusySlot] = React.useState("");
+  const fileRef = React.useRef(null);
+  const slotRef = React.useRef("");
+  React.useEffect(() => {
+    fetch("/api/welcome", { cache: "no-store" }).then(r => r.ok ? r.json() : null).then(d => { if (d) setC(d.content); }).catch(() => setMsg("Couldn’t load the website settings."));
+    fetch("/api/calendar?action=feeds", { cache: "no-store" }).then(r => r.ok ? r.json() : []).then(f => setFeeds(Array.isArray(f) ? f : [])).catch(() => {});
+  }, []);
+  if (!c) return <p style={S.reportEmpty}>{msg || "Loading…"}</p>;
+  const field = { ...S.reqInput, width:"100%", boxSizing:"border-box", fontSize:13.5 };
+  const lbl = { fontSize:10.5, color:C.muted, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, margin:"0 0 4px", display:"block" };
+  const set = (k, v) => { setC(x => ({ ...x, [k]: v })); setDirty(true); setMsg(""); };
+  const setG = (i, k, v) => set("gatherings", c.gatherings.map((g, j) => j === i ? { ...g, [k]: v } : g));
+  const inp = (k, label, ph) => <div><label style={lbl}>{label}</label><input value={c[k] || ""} onChange={e => set(k, e.target.value)} placeholder={ph || ""} style={field} /></div>;
+  const area = (k, label, rows = 4) => <div><label style={lbl}>{label}</label><textarea value={c[k] || ""} onChange={e => set(k, e.target.value)} rows={rows} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>;
+  const box = (title, kids, note) => (
+    <div style={{ ...S.reportBox, display:"flex", flexDirection:"column", gap:10 }}>
+      <p style={{ ...S.reportTitle, margin:0 }}>{title}</p>
+      {note && <p style={{ margin:0, fontSize:12, color:C.muted, lineHeight:1.5 }}>{note}</p>}
+      {kids}
+    </div>
+  );
+  const autoCals = c.eventCalendars === null || c.eventCalendars === undefined;
+  const picked = id => autoCals ? /event/i.test((feeds.find(f => f.id === id) || {}).name || "") : c.eventCalendars.includes(id);
+  const toggleCal = id => {
+    const now = feeds.filter(f => f.audience !== "leaders" && picked(f.id)).map(f => f.id);
+    set("eventCalendars", now.includes(id) ? now.filter(x => x !== id) : [...now, id]);
+  };
+  async function save() {
+    setMsg("Saving…");
+    try {
+      const r = await fetch("/api/welcome", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(c) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error);
+      setC(d.content); setDirty(false); setMsg("Saved. The website shows it now.");
+    } catch (_e) { setMsg("Couldn’t save. Try again."); }
+  }
+  async function upload(e) {
+    const file = e.target.files && e.target.files[0]; e.target.value = "";
+    const slot = slotRef.current;
+    if (!file || !slot) return;
+    setBusySlot(slot); setMsg("");
+    try {
+      const blob = await resizeImage(file, slot === "logo" ? 400 : 1400, slot === "logo");
+      const form = new FormData(); form.append("photo", blob, "photo.jpg");
+      const r = await fetch(`/api/welcome?photo=${slot}`, { method:"POST", body: form });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || "Upload failed");
+      if (window.__welcomeUpload) window.__welcomeUpload(slot, d.photos[slot], blob);
+      setC(x => ({ ...x, photos: d.photos }));
+    } catch (err) { setMsg(err.message || "Couldn’t upload that photo."); }
+    setBusySlot("");
+  }
+  async function importCanva() {
+    setBusySlot("canva"); setMsg("");
+    try {
+      const r = await fetch("/api/welcome", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ action:"importCanva" }) });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || "Couldn’t copy the photos.");
+      setC(x => ({ ...x, photos: d.photos }));
+      setMsg(`Copied ${d.copied} photo${d.copied === 1 ? "" : "s"} from the Canva site.${d.skipped ? ` Kept ${d.skipped} you’d already added.` : ""}`);
+    } catch (err) { setMsg(err.message); }
+    setBusySlot("");
+  }
+  async function removePhoto(slot) {
+    try {
+      const r = await fetch(`/api/welcome?photo=${slot}`, { method:"DELETE" });
+      const d = await r.json();
+      if (r.ok && d.ok) setC(x => ({ ...x, photos: d.photos }));
+    } catch (_e) {}
+  }
+  const photoSrc = slot => c.photos && c.photos[slot] ? (window.__welcomePhoto ? window.__welcomePhoto(slot, c.photos[slot]) : `/api/welcome?photo=${slot}&v=${c.photos[slot]}`) : null;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ ...S.reportBox, display:"flex", flexDirection:"column", gap:8 }}>
+        <p style={{ ...S.reportTitle, margin:0 }}>Your public website</p>
+        <p style={{ margin:0, fontSize:12.5, color:C.muted, lineHeight:1.55 }}>This is the welcome page for new students and families at <b style={{ color:C.cream }}>livinghopestudents.com</b> (also at <a href="/welcome/" target="_blank" rel="noopener" style={{ color:C.accent }}>impactletspray.app/welcome</a>). It fills in this week’s teaching from <b style={{ color:C.cream }}>Teach</b> and upcoming events from your <b style={{ color:C.cream }}>BAND calendar</b> on its own, so there’s nothing to update there. The text below only needs changing if times or contacts change.</p>
+        <a href="/welcome/" target="_blank" rel="noopener" style={{ ...S.cancelBtn, alignSelf:"flex-start", textDecoration:"none", color:C.cream }}>Open the website ↗</a>
+      </div>
+
+      {box("Photos", (
+        <>
+        <button onClick={importCanva} disabled={!!busySlot} style={{ ...S.cancelBtn, alignSelf:"flex-start", color:C.cream }}>{busySlot === "canva" ? "Copying…" : "Copy photos from the Canva site"}</button>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          <input ref={fileRef} type="file" accept="image/*" onChange={upload} style={{ display:"none" }} />
+          {WELCOME_PHOTOS.map(([slot, name, note]) => {
+            const src = photoSrc(slot);
+            return (
+              <div key={slot} style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:10, padding:8, display:"flex", flexDirection:"column", gap:6 }}>
+                <div style={{ aspectRatio: slot === "logo" ? "1 / 1" : "4 / 3", borderRadius: slot === "logo" ? "50%" : 8, overflow:"hidden", background:C.faint, display:"flex", alignItems:"center", justifyContent:"center", width: slot === "logo" ? "60%" : "100%", alignSelf:"center" }}>
+                  {src ? <img src={src} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <Camera size={20} color={C.muted} />}
+                </div>
+                <span style={{ fontSize:12.5, color:C.cream, fontWeight:600 }}>{name}</span>
+                <span style={{ fontSize:11, color:C.muted, lineHeight:1.35 }}>{note}</span>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={() => { slotRef.current = slot; fileRef.current && fileRef.current.click(); }} disabled={!!busySlot} style={{ ...S.cancelBtn, padding:"6px 10px", fontSize:12 }}>{busySlot === slot ? "Uploading…" : src ? "Change" : "Add"}</button>
+                  {src && <button onClick={() => removePhoto(slot)} style={{ background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Remove</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        </>
+      ), "Photos save right away and replace the old one. Any phone photo works: the app shrinks it automatically. Landscape (wider than tall) looks best; keep faces near the middle, because phones show a square crop of the Students, Parents and Events photos. Tap “Copy photos from the Canva site” once to bring over the logo and photos from your current website. Do it before livinghopestudents.com is moved. Empty spots get filled, photos you’ve added stay.")}
+
+      {box("Welcome", <>{inp("name", "Ministry name")}{area("intro", "Intro", 4)}{inp("tagline", "Tagline")}</>)}
+      {box("Students", <>{inp("belongTitle", "Heading")}{area("belongText", "Message (words in ALL CAPS show in bold)", 7)}</>)}
+      {box("Weekly connections", (
+        <>
+          {c.gatherings.map((g, i) => (
+            <div key={i} style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:10, padding:10, display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                <div><label style={lbl}>Label</label><input value={g.title} onChange={e => setG(i, "title", e.target.value)} placeholder="Sunday Nights" style={field} /></div>
+                <div><label style={lbl}>Name</label><input value={g.name} onChange={e => setG(i, "name", e.target.value)} placeholder="IMPACT" style={field} /></div>
+              </div>
+              <div><label style={lbl}>When</label><input value={g.when} onChange={e => setG(i, "when", e.target.value)} placeholder="6:00 – 8:00 PM" style={field} /></div>
+              <div><label style={lbl}>Details</label><textarea value={g.text} onChange={e => setG(i, "text", e.target.value)} rows={2} style={{ ...field, resize:"vertical", lineHeight:1.45 }} /></div>
+              <button onClick={() => set("gatherings", c.gatherings.filter((_, j) => j !== i))} style={{ alignSelf:"flex-end", background:"none", border:"none", color:C.muted, fontSize:12, cursor:"pointer" }}>Remove</button>
+            </div>
+          ))}
+          {c.gatherings.length < 6 && <button onClick={() => set("gatherings", [...c.gatherings, { title:"", name:"", when:"", text:"" }])} style={{ ...S.cancelBtn, alignSelf:"flex-start" }}>Add a gathering</button>}
+        </>
+      ))}
+      {box("Text alerts", <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>{inp("alertsKeyword", "Text this word")}{inp("alertsNumber", "To this number")}</div>)}
+      {box("Parents", <>{inp("parentTitle", "Heading")}{area("parentText", "Message", 6)}</>)}
+      {box("Events on the website", (
+        <>
+          {feeds.filter(f => f.audience !== "leaders").length === 0
+            ? <p style={{ margin:0, fontSize:12.5, color:C.muted }}>Add your BAND calendars in Calendar first.</p>
+            : feeds.filter(f => f.audience !== "leaders").map(f => (
+              <label key={f.id} style={{ display:"flex", gap:8, alignItems:"center", fontSize:13.5, color:C.cream, cursor:"pointer" }}>
+                <input type="checkbox" checked={picked(f.id)} onChange={() => toggleCal(f.id)} /> {f.name}
+              </label>
+            ))}
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <label style={{ ...lbl, margin:0 }}>Show up to</label>
+            <select value={c.eventCount} onChange={e => set("eventCount", Number(e.target.value))} style={S.gradeSelect}>{[3, 6, 9, 12].map(n => <option key={n} value={n}>{n} events</option>)}</select>
+          </div>
+        </>
+      ), "Upcoming events from these calendars show on the website automatically, with Register buttons for sign-up links. Calendars marked leaders only never show.")}
+      {box("Contact & social", (
+        <>
+          {inp("church", "Church")}{inp("address", "Address")}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>{inp("website", "Church website")}{inp("phone", "Phone")}</div>
+          {inp("band", "BAND link")}{inp("instagram", "Instagram link")}{inp("facebook", "Facebook link")}{inp("youtube", "YouTube link")}
+        </>
+      ))}
+
+      <div style={{ position:"sticky", bottom:0, background:C.bg, padding:"12px 0", display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${C.border}` }}>
+        <button onClick={save} disabled={!dirty} style={{ ...S.confirmBtn, opacity: dirty ? 1 : 0.5 }}>Save website</button>
+        <span style={{ fontSize:12, color: /Couldn/.test(msg) ? "#e07a5f" : dirty ? C.orange : C.muted }}>{msg || (dirty ? "Unsaved changes" : "")}</span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Monthly recap (admin → Report) ── */
 function MonthlyRecap({ people, weekHistory, ministryName, series }) {
   const months = React.useMemo(() => {
@@ -4884,7 +5055,7 @@ function AppMain({ settings, role, onStatus }) {
             {v === "wall" && wallNew > 0 && view !== "wall" && <span style={S.tabBadge}>{wallNew}</span>}
           </button>
         ))}
-        {adminAuthed && [["inbox","Inbox"],["series","Teach"],["people","People"],["access","Access"],["report","Report"],["import","Import"]].map(([v, label]) => (
+        {adminAuthed && [["inbox","Inbox"],["series","Teach"],["people","People"],["access","Access"],["website","Website"],["report","Report"],["import","Import"]].map(([v, label]) => (
           <button key={v} onClick={() => setView(v)} style={{ ...S.tab, ...(view === v ? S.tabActive : {}), position:"relative" }}>
             {label}
             {v === "inbox" && submissions.length > 0 && <span style={S.tabBadge}>{submissions.length}</span>}
@@ -5784,6 +5955,12 @@ function AppMain({ settings, role, onStatus }) {
       )}
 
       {/* ─── INBOX ─── */}
+      {view === "website" && adminAuthed && (
+        <div style={{ ...S.importWrap, gap:16 }}>
+          <WebsiteEditor />
+        </div>
+      )}
+
       {view === "access" && adminAuthed && (
         <div style={{ ...S.importWrap, gap:16 }}>
           <LeaderCodes />
