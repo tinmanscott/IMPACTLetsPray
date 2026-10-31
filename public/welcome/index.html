@@ -164,6 +164,12 @@
   @media (max-width: 900px) { .events { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 600px) { .events { grid-template-columns: 1fr; } }
 
+  /* New here */
+  .new-here-box { margin-top: 18px; background: color-mix(in srgb, var(--green) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--green) 35%, var(--line)); border-radius: var(--radius); padding: 18px 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+  .new-here-box strong { font-family: var(--display); font-size: 18px; color: var(--head); }
+  [hidden] { display: none !important; }
+  @media (max-width: 760px) { .nav .new-here { padding: 8px 12px; } }
+
   /* Team */
   .team-group h3 { margin-top: 26px; }
   .team { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 16px; margin-top: 14px; }
@@ -235,6 +241,7 @@
         <a class="link" href="#parents">Parents</a>
         <a class="link" href="#events">Events</a>
         <a class="link" href="#team" id="navTeam">Team</a>
+        <a class="btn small green new-here" href="#students" hidden><span class="long new-here-label">New here? Check in</span><span class="short">New here</span></a>
         <a class="btn small" href="#app"><span class="long">Open the App</span><span class="short">App</span></a>
       </nav>
     </div>
@@ -253,7 +260,8 @@
         <p class="intro" id="intro"></p>
         <p class="tagline" id="tagline"></p>
         <div class="actions">
-          <a class="btn" href="#students">I’m new here</a>
+          <a class="btn green new-here" href="#students" hidden>New here? Check in</a>
+          <a class="btn new-here-alt" href="#students">I’m new here</a>
           <a class="btn orange" href="#events">Student Events &amp; Trips</a>
         </div>
         <div class="social" id="socialTop"></div>
@@ -274,6 +282,10 @@
       </div>
       <h2 style="margin-top:48px">Weekly Connections</h2>
       <p class="muted" style="margin-top:6px">Join us at any of our weekly gatherings. Just show up, we’d love to meet you.</p>
+      <div class="new-here-box" hidden>
+        <div><strong>First time at IMPACT?</strong><p class="muted" style="font-size:15px">Fill out our quick new student form so we can check you in and get to know you.</p></div>
+        <a class="btn green new-here" href="#students" target="_blank" rel="noopener"><span class="new-here-label">New here? Check in</span></a>
+      </div>
       <div class="cards" id="gatherings"></div>
     </div>
   </section>
@@ -525,6 +537,17 @@
         x.text ? el("p", { text: x.text }) : null
       ]));
     });
+
+    // New here: a button to the One Church form for new students (set in admin → Website)
+    Array.prototype.forEach.call(document.querySelectorAll(".new-here, .new-here-box"), function (b) { b.hidden = !c.newHereLink; });
+    Array.prototype.forEach.call(document.querySelectorAll(".new-here"), function (b) {
+      if (!c.newHereLink) return;
+      b.href = c.newHereLink; b.target = "_blank"; b.rel = "noopener";
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".new-here-label"), function (l) { l.textContent = c.newHereLabel || "New here? Check in"; });
+    Array.prototype.forEach.call(document.querySelectorAll(".new-here-alt"), function (b) { b.hidden = !!c.newHereLink; });
+    var heroNew = document.querySelector(".hero .new-here");
+    if (heroNew && !heroNew.querySelector(".new-here-label")) heroNew.textContent = c.newHereLabel || "New here? Check in";
 
     // Stay connected
     $("kw").textContent = "“" + (c.alertsKeyword || "") + "”";

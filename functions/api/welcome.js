@@ -10,7 +10,7 @@
 // (by default, the one with "event" in its name). Only public-facing fields are sent.
 import { json } from "../../lib/auth.js";
 import { loadContent, cleanContent, PHOTO_SLOTS, STAFF_SLOT } from "../../lib/welcome.js";
-import { loadCalendars, feedEvents } from "../../lib/calendar.js";
+import { loadCalendars, feedEvents, cleanBandDesc } from "../../lib/calendar.js";
 
 const MAX_BYTES = 1024 * 1024;
 // Photos on the old Canva site (livinghopestudents.com), for the one-time copy
@@ -50,7 +50,7 @@ export async function onRequest(context) {
         .filter(e => e.ts + (e.allDay ? 864e5 : 3 * 36e5) >= Date.now())
         .sort((a, b) => a.ts - b.ts)
         .slice(0, content.eventCount)
-        .map(e => ({ id: e.id, title: e.title, start: e.start, end: e.end, allDay: e.allDay, location: e.location, desc: String(e.desc || "").slice(0, 600), link: e.link || "" }));
+        .map(e => ({ id: e.id, title: e.title, start: e.start, end: e.end, allDay: e.allDay, location: e.location, desc: cleanBandDesc(e.desc).slice(0, 600), link: e.link || "" }));
     } catch (_e) { events = []; }
     // This week's teaching (from Teach in Let's Pray)
     let series = null;

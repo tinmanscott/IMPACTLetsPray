@@ -2908,6 +2908,7 @@ function WebsiteEditor() {
           {c.gatherings.length < 6 && <button onClick={() => set("gatherings", [...c.gatherings, { title:"", name:"", when:"", text:"" }])} style={{ ...S.cancelBtn, alignSelf:"flex-start" }}>Add a gathering</button>}
         </>
       ))}
+      {box("New here button", <>{inp("newHereLink", "Link to your One Church new student form", "https://livinghopefindlay.onechurchsoftware.com/…")}{inp("newHereLabel", "Button text")}</>, "Paste the link new students use to sign up or check in for the first time. A green button then shows at the top of the website and in Weekly Connections. Leave it empty to hide the button.")}
       {box("Text alerts", <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>{inp("alertsKeyword", "Text this word")}{inp("alertsNumber", "To this number")}</div>)}
       {box("Parents", <>{inp("parentTitle", "Heading")}{area("parentText", "Message", 6)}</>)}
       {box("Events on the website", (
