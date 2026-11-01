@@ -2910,7 +2910,7 @@ function WebsiteEditor() {
       ))}
       {box("New here button", <>{inp("newHereLink", "Link to your One Church new student form", "https://livinghopefindlay.onechurchsoftware.com/…")}{inp("newHereLabel", "Button text")}</>, "Paste the link new students use to sign up or check in for the first time. A green button then shows at the top of the website and in Weekly Connections. Leave it empty to hide the button.")}
       {box("Text alerts", <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>{inp("alertsKeyword", "Text this word")}{inp("alertsNumber", "To this number")}</div>)}
-      {box("Parents", <>{inp("parentTitle", "Heading")}{area("parentText", "Message", 6)}</>)}
+      {box("Parents", <>{inp("parentTitle", "Heading")}{area("parentText", "Message", 6)}<div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>{inp("parentAlertsKeyword", "Parent text keyword")}<div><label style={lbl}>Texted to</label><p style={{ margin:"8px 0 0", fontSize:13.5, color:C.cream }}>{c.alertsNumber || "(set under Text alerts)"}</p></div></div>{inp("parentEmailLink", "Parent email sign-up link (optional)", "https://…")}</>, "The Parent Hub shows a “Sign up for parent texts” button that texts this keyword to your text alerts number. Add an email sign-up form link to show a second button.")}
       {box("Events on the website", (
         <>
           {feeds.filter(f => f.audience !== "leaders").length === 0
