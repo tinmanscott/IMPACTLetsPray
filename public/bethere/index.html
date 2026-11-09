@@ -681,6 +681,24 @@
   }
   .cheer-btn.on .ct{background:rgba(255,255,255,0.25);}
   .cheer-pop{animation:pop .35s ease-out;}
+  /* Who's going */
+  .crowd{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:10px 0 2px;}
+  .crowd-lab{font-family:'Montserrat', sans-serif; font-weight:800; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent-deep); margin-right:2px;}
+  .crowd-chip{font-size:12.5px; font-weight:600; padding:3px 9px; border-radius:999px; background:var(--paper-soft, rgba(0,0,0,0.05)); border:1px solid var(--rule); color:var(--ink);}
+  .crowd-chip.me{border-color:var(--accent); color:var(--accent-deep);}
+  .crowd-chip b{font-size:10px; font-weight:800; margin-left:5px; padding:1px 5px; border-radius:6px; background:var(--hs); color:#fff; text-transform:uppercase; letter-spacing:.04em;}
+  .crowd-more{font-size:12.5px; font-weight:700; color:var(--ink-soft); background:none; border:none; cursor:pointer; padding:3px 4px; text-decoration:underline;}
+  #btName{position:fixed; inset:0; z-index:9998; background:rgba(0,0,0,0.55); display:none; align-items:flex-end; justify-content:center; padding:16px;}
+  #btName.open{display:flex;}
+  #btName form{width:100%; max-width:420px; background:var(--paper,#fff); color:var(--ink); border-radius:18px; padding:20px; display:flex; flex-direction:column; gap:10px; font-family:'Libre Franklin', system-ui, sans-serif; margin-bottom:max(8px, env(safe-area-inset-bottom));}
+  #btName h2{margin:0; font-family:'Montserrat', sans-serif; font-weight:900; font-size:20px;}
+  #btName p{margin:0; color:var(--ink-soft); font-size:14px; line-height:1.45;}
+  #btName input{font-size:17px; padding:12px 14px; border-radius:12px; border:1px solid var(--rule); background:var(--paper-soft, #fff); color:var(--ink);}
+  #btName .row{display:flex; gap:8px;}
+  #btName button{flex:1; font-size:15px; font-weight:800; padding:12px; border-radius:12px; border:none; cursor:pointer;}
+  #btName .go{background:var(--accent); color:#fff;}
+  #btName .cancel{background:transparent; color:var(--ink-soft); border:1px solid var(--rule);}
+  @media (min-width:700px){ #btName{align-items:center;} }
   @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.15)}100%{transform:scale(1)}}
   .ticket-footer{align-items:center;}
 
@@ -1030,7 +1048,7 @@ const BT = {
     try{
       const c = await (await fetch('/api/bt?what=config', { credentials:'same-origin', cache:'no-store' })).json();
       BT.cfgListeners.forEach(fn => fn({ exists: true, data: () => ({ groupName: c.groupName }) }));
-      try{ isAdmin = !!c.isAdmin; render(); }catch(e){}
+      try{ isAdmin = !!c.isAdmin; btMe = c.me || ''; render(); }catch(e){}
     }catch(err){}
   },
   start(){
@@ -1050,7 +1068,7 @@ const eventsRef = {
     return {
       id: id || ('new_' + Math.random().toString(36).slice(2)),
       update(p){
-        if(p && p.cheers && p.cheers.__inc !== undefined) return BT.call({ action:'cheer', id, on: p.cheers.__inc > 0 });
+        if(p && p.cheers && p.cheers.__inc !== undefined) return BT.call({ action:'cheer', id, on: p.cheers.__inc > 0, name: p.__name || '' });
         return BT.call({ action:'update', id, event: p });
       },
       delete(){ return BT.call({ action:'delete', id }); },
@@ -1308,12 +1326,50 @@ function eventEmoji(name){
 let myCheers = new Set();
 try{ myCheers = new Set(JSON.parse(safeGet('bt_cheered') || '[]')); }catch(e){ myCheers = new Set(); }
 function saveCheers(){ safeSet('bt_cheered', JSON.stringify(Array.from(myCheers))); }
+/* Who's going: the first time someone taps "I'll be there", they type their name once (leaders are known from their code).
+   The crowd list shows first name + last initial to anyone signed in. */
+let btMe = '';
+function myGoingName(){ return btMe || safeGet('bt_myname') || ''; }
+function isGoing(e){ return !!(e && ((e.going || []).some(g => g.mine) || myCheers.has(e.id))); }
+function askName(then){
+  const wrap = document.getElementById('btName');
+  const input = document.getElementById('btNameInput');
+  input.value = safeGet('bt_myname') || '';
+  wrap.classList.add('open');
+  setTimeout(() => input.focus(), 50);
+  wrap._then = then;
+}
+function closeName(){ document.getElementById('btName').classList.remove('open'); }
+function crowdHtml(e){
+  const going = e.going || [];
+  if(!going.length && !(e.cheers > 0)) return '';
+  const shown = going.slice(0, 8);
+  const extra = Math.max(0, (e.cheers || 0) - shown.length);
+  const chips = shown.map(g => `<span class="crowd-chip${g.mine ? ' me' : ''}${g.r === 'leader' ? ' leader' : ''}">${escapeHtml(g.n)}${g.mine ? ' (you)' : ''}${g.r === 'leader' ? '<b>Leader</b>' : ''}</span>`).join('');
+  const more = extra ? `<button class="crowd-more" data-id="${e.id}" data-action="crowd">+${extra} more</button>` : '';
+  return `<div class="crowd"><span class="crowd-lab">🙌 Going</span>${chips}${more}</div>`;
+}
+function showCrowd(id){
+  const e = allEvents.find(x => x.id === id); if(!e) return;
+  const going = e.going || [];
+  const anon = Math.max(0, (e.cheers || 0) - going.length);
+  const names = going.map(g => g.n + (g.r === 'leader' ? ' (leader)' : '')).join(', ');
+  showToast(`${names}${anon ? `${names ? ' + ' : ''}${anon} more` : ''}`);
+}
 function toggleCheer(id, btn){
-  const on = !myCheers.has(id);
+  const evNow = allEvents.find(x => x.id === id);
+  const on = !isGoing(evNow);
+  if(on && !myGoingName()){ askName(() => toggleCheer(id, btn)); return; }
   if(on) myCheers.add(id); else myCheers.delete(id);
   saveCheers();
   const ev = allEvents.find(x => x.id === id);
-  if(ev){ ev.cheers = Math.max(0, (ev.cheers || 0) + (on ? 1 : -1)); }
+  if(ev){
+    ev.cheers = Math.max(0, (ev.cheers || 0) + (on ? 1 : -1));
+    const g = (ev.going || []).filter(x => !x.mine);
+    ev.going = on ? g.concat([{ n: myGoingName(), r: btMe ? 'leader' : '', mine: true }]) : g;
+    const crowd = btn && btn.closest('.ticket') ? btn.closest('.ticket').querySelector('.crowd-slot') : null;
+    if(crowd) crowd.innerHTML = crowdHtml(ev);
+  }
   if(btn){
     btn.classList.toggle('on', on);
     btn.querySelector('.lab').textContent = on ? "You'll be there!" : "I'll be there";
@@ -1325,7 +1381,7 @@ function toggleCheer(id, btn){
     confetti(r ? r.left + r.width/2 : null, r ? r.top : null, 40);
     showToast("See you there! 🙌");
   }
-  eventsRef.doc(id).update({ cheers: firebase.firestore.FieldValue.increment(on ? 1 : -1) })
+  eventsRef.doc(id).update({ cheers: firebase.firestore.FieldValue.increment(on ? 1 : -1), __name: myGoingName() })
     .catch(err => { console.error(err); });
 }
 
@@ -1468,7 +1524,7 @@ function renderTicket(e){
   el.className = 'ticket' + (e.adminHighlight ? ' admin-highlight' : '');
   el.dataset.ev = e.id;
   const em = eventEmoji(e.eventName);
-  const cheered = myCheers.has(e.id);
+  const cheered = isGoing(e);
 
   const metaBits = [];
   if(e.time) metaBits.push(`<span class="mono">${icon('clock')} ${formatTime12(e.time)}</span>`);
@@ -1494,6 +1550,7 @@ function renderTicket(e){
       ${metaBits.length ? `<div class="meta-row">${metaBits.join('')}</div>` : ''}
       ${e.adminNote ? `<div class="admin-note"><span class="lab">Admin Note</span>${escapeHtml(e.adminNote)}</div>` : ''}
       ${e.notes ? `<div class="notes">${escapeHtml(e.notes)}</div>` : ''}
+      <div class="crowd-slot">${crowdHtml(e)}</div>
       <div class="ticket-footer">
         <button class="cheer-btn${cheered ? ' on' : ''}" data-id="${e.id}" data-action="cheer" aria-pressed="${cheered}"><span aria-hidden="true">🙌</span><span class="lab">${cheered ? "You'll be there!" : "I'll be there"}</span><span class="ct">${e.cheers || 0}</span></button>
         <button class="link-btn" data-id="${e.id}" data-action="addcal">${icon('calendar')} Add to my calendar</button>
@@ -1578,9 +1635,10 @@ document.addEventListener('click', e => {
   const ev = allEvents.find(x => x.id === id);
   if(!ev) return;
 
+  if(action === 'crowd'){ showCrowd(id); return; }
   if(action === 'cheer'){
     toggleCheer(id, btn);
-    btn.setAttribute('aria-pressed', myCheers.has(id));
+    btn.setAttribute('aria-pressed', isGoing(allEvents.find(x => x.id === id)));
     return;
   }
   if(action === 'edit'){
@@ -2513,6 +2571,27 @@ setNameRows($('#bulkNameRows'), '');
 if(safeGet('bt_view') === 'calendar'){ $('#viewCalBtn').onclick(); } else { render(); }
 </script>
 
+<div id="btName" role="dialog" aria-modal="true" aria-labelledby="btNameTitle">
+  <form id="btNameForm" autocomplete="off">
+    <h2 id="btNameTitle">Who’s coming?</h2>
+    <p>Your name shows on the event so others can see who’s going. Only people with an IMPACT code can see it, and it shows as first name + last initial.</p>
+    <input id="btNameInput" type="text" placeholder="First and last name" aria-label="Your name" maxlength="60" autocomplete="name">
+    <div class="row"><button type="button" class="cancel" id="btNameCancel">Cancel</button><button type="submit" class="go">I’ll be there</button></div>
+  </form>
+</div>
+<script>
+document.getElementById('btNameForm').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const v = document.getElementById('btNameInput').value.trim();
+  if(v.length < 2){ document.getElementById('btNameInput').focus(); return; }
+  safeSet('bt_myname', v);
+  const wrap = document.getElementById('btName'); const then = wrap._then; wrap._then = null;
+  closeName();
+  if(then) then();
+});
+document.getElementById('btNameCancel').addEventListener('click', () => { document.getElementById('btName')._then = null; closeName(); });
+document.getElementById('btName').addEventListener('click', (ev) => { if(ev.target.id === 'btName'){ ev.currentTarget._then = null; closeName(); } });
+</script>
 <div id="btGate" role="dialog" aria-modal="true" aria-labelledby="btGateTitle">
   <form class="box" id="btGateForm" autocomplete="off">
     <h1 id="btGateTitle">Be <span>There</span></h1>

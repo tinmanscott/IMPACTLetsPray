@@ -6,11 +6,12 @@
 // POST /api/bt { action: "addMany", events }     → { ok, count }   (spreadsheet / PDF import, up to 200)
 // POST /api/bt { action: "update", id, event }   → owner or admin
 // POST /api/bt { action: "delete", id }          → owner or admin
-// POST /api/bt { action: "cheer", id, on }       → anyone signed in
+// POST /api/bt { action: "cheer", id, on, name } → anyone signed in: "I'll be there" — adds/removes this phone
+//                                                  from the event's crowd list, shown as first name + last initial
 // POST /api/bt { action: "config", groupName }   → admin
 // POST /api/bt { action: "import" }              → admin: one-time copy from the old Firebase database
 // The device that posts an event sends its device ID in the X-Device header (Be There's "your events" feature).
-import { json } from "../../lib/auth.js";
+import { json, shortName } from "../../lib/auth.js";
 import { loadEvents, saveEvents, loadConfig, cleanEvent, canEdit, newId, importFromFirebase } from "../../lib/bethere.js";
 
 export async function onRequest(context) {
@@ -23,9 +24,18 @@ export async function onRequest(context) {
   const url = new URL(request.url);
 
   if (request.method === "GET") {
-    if (url.searchParams.get("what") === "config") { const c = await loadConfig(kv); return json({ groupName: c.groupName, isAdmin, role }); }
+    if (url.searchParams.get("what") === "config") {
+      const c = await loadConfig(kv);
+      const leader = ctx.session.leader && ctx.session.leader.name;
+      return json({ groupName: c.groupName, isAdmin, role, me: leader ? shortName(leader) : "" });
+    }
     const list = await loadEvents(kv);
-    return json(list.map(({ ownerId, ...e }) => ({ ...e, ownerId: ownerId && ownerId === deviceId ? deviceId : undefined })));
+    // Phone IDs never leave the server: each crowd entry is just a short name, a role and whether it's this phone
+    return json(list.map(({ ownerId, going, ...e }) => ({
+      ...e,
+      ownerId: ownerId && ownerId === deviceId ? deviceId : undefined,
+      going: (Array.isArray(going) ? going : []).map(g => ({ n: g.n, r: g.r, mine: !!deviceId && g.d === deviceId })),
+    })));
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
   let body;
@@ -70,9 +80,28 @@ export async function onRequest(context) {
   if (i < 0) return json({ error: "That event isn’t on the board anymore." }, 404);
 
   if (body.action === "cheer") {
-    list[i] = { ...list[i], cheers: Math.max(0, (list[i].cheers || 0) + (body.on === false ? -1 : 1)) };
+    const ev = list[i];
+    const going = Array.isArray(ev.going) ? ev.going.slice() : [];
+    const at = deviceId ? going.findIndex(g => g.d === deviceId) : -1;
+    let cheers = ev.cheers || 0;
+    if (body.on === false) {
+      if (at >= 0) going.splice(at, 1);
+      cheers = Math.max(0, cheers - 1);
+    } else if (at < 0) {
+      // Leaders show under their own name; everyone else types theirs once on their phone
+      const leaderName = ctx.session.leader && ctx.session.leader.name;
+      const name = shortName(leaderName || String(body.name || "").replace(/<[^>]*>/g, "").replace(/[<>]/g, "").slice(0, 60));
+      const r = role === "team" || role === "admin" ? "leader" : role === "parent" ? "parent" : "student";
+      if (deviceId && name && going.length < 300) going.push({ d: deviceId, n: name, r, at: now });
+      cheers += 1;
+    } else if (body.name || (ctx.session.leader && ctx.session.leader.name)) {
+      // Already going: just update the name shown
+      const name = shortName((ctx.session.leader && ctx.session.leader.name) || String(body.name).replace(/<[^>]*>/g, "").replace(/[<>]/g, "").slice(0, 60));
+      if (name) going[at] = { ...going[at], n: name };
+    }
+    list[i] = { ...ev, cheers, going };
     await saveEvents(kv, list);
-    return json({ ok: true, cheers: list[i].cheers });
+    return json({ ok: true, cheers, going: going.map(g => ({ n: g.n, r: g.r, mine: g.d === deviceId })) });
   }
   if (!canEdit(list[i], { isAdmin, deviceId })) return json({ error: "Only the person who posted this (or an admin) can change it." }, 403);
   if (body.action === "update") {

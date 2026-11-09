@@ -895,7 +895,8 @@ function BeThereList({ data, who = "student", maxWidth = 400 }) {
                   {e.level && <span style={{ marginLeft:6, fontSize:10, fontWeight:700, color:"#a9acb1", border:"1px solid #34363a", borderRadius:6, padding:"1px 5px", verticalAlign:"middle" }}>{e.level.toUpperCase()}</span>}
                 </div>
                 <div style={{ fontSize:13.5, color:"#d9d7d2", marginTop:1 }}>{e.eventName}</div>
-                <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>{[fmtTime12(e.time), e.location].filter(Boolean).join(" · ")}{e.cheers ? ` · 📣 ${e.cheers}` : ""}</div>
+                <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:2 }}>{[fmtTime12(e.time), e.location].filter(Boolean).join(" · ")}{e.cheers ? ` · 🙌 ${e.cheers} going` : ""}</div>
+                {e.going && e.going.length > 0 && <div style={{ fontSize:12, color:"#a9acb1", marginTop:2 }}>Going: {e.going.join(", ")}{e.cheers > e.going.length ? ` + ${e.cheers - e.going.length} more` : ""}</div>}
                 {e.notes && <div style={{ fontSize:12.5, color:"#a9acb1", marginTop:3, whiteSpace:"pre-wrap" }}>{linkify(e.notes)}</div>}
                 <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}>
                   <button onClick={() => share(e)} style={{ background:"#e95e24", color:"#fff", border:"none", borderRadius:8, padding:"6px 12px", fontSize:12.5, fontWeight:700, cursor:"pointer", fontFamily:"'Inter', system-ui, sans-serif" }}>Share</button>

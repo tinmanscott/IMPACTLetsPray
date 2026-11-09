@@ -1,6 +1,6 @@
 // Upcoming events from the Be There app (impactbethere.app), read-only.
 //
-// GET /api/bethere → { events: [{ id, students, eventName, dateStr, time, location, link, notes, level, highlight, cheers }], updated }
+// GET /api/bethere → { events: [{ id, students, eventName, dateStr, time, location, link, notes, level, highlight, cheers, going: [short names] }], updated }
 //   Anyone signed in (students with the student code, parents, leaders). Names come back as first name + last initial.
 //
 // Be There keeps its events in Firebase (project impact-students-events, collection "events"), readable without
@@ -44,6 +44,7 @@ export async function onRequest(context) {
       id: e.id, students: shortNames(e.student).slice(0, 200), eventName: e.eventName, dateStr: e.dateStr, time: e.time || "",
       location: e.location || "", link: safeLink(e.link), notes: String(e.notes || "").slice(0, 400), level: e.level || "",
       highlight: e.adminHighlight === true, cheers: Math.max(0, Number(e.cheers) || 0),
+      going: (Array.isArray(e.going) ? e.going : []).slice(0, 30).map(g => (g.n || "") + (g.r === "leader" ? " (leader)" : "")).filter(Boolean),
     }));
     return json({ events, updated: Date.now() });
   }
